@@ -1,7 +1,7 @@
 # MindBridge SaaS App — Project Context
 
-> **Last Updated:** June 25, 2026
-> **Status:** Phase 3 Complete -- Comrade AI Integration (Gemini 2.5 Flash)
+> **Last Updated:** July 6, 2026
+> **Status:** Phase 5 Complete -- Google Auth, Onboarding, Guardians, Platform Counselors & Admin
 
 ---
 
@@ -124,6 +124,35 @@ npm run build
 ---
 
 ## 📝 Change Log
+
+### July 2026 — Phase 4 (Security) & Phase 5 (Auth, Onboarding, Platform)
+**Phase 4 — architecture review + P0/P1 fixes:**
+- Provider-agnostic AI layer (AIProvider / AIProviderFactory / AIRouter, DB-driven routes,
+  fallback, retry, usage logging + cost) — Gemini implemented; adding Claude/OpenAI/Ollama
+  is one provider file + registry line.
+- Async Gemini call (`client.aio`); self-signup restricted to student/parent; server-controlled
+  `sender_type`/metadata; JWT prod-secret startup guard; background title/memory hooks; safety
+  logs on their own committed session; rate limiting; per-student daily AI budget; email lowercasing.
+- **AI Playground** (`/admin/playground`) and **Platform Admin** dashboard (`/admin`): school
+  registration, seats, subscriptions, break-glass chat access (audit-logged).
+
+**Phase 5 — Google Auth, Onboarding, Guardians, Platform Counselors & Admin:**
+- **Google Sign-In** (GIS ID-token flow, `google-auth`; no new dep): `/auth/google` +
+  `/auth/google/complete`. Same JWT; new users provide only mobile + institution code.
+  Fully env-driven — app works with no credentials (button hidden, endpoint 503).
+  `users.google_sub` + `auth_provider`; `password_hash` nullable (migration 007).
+- **Student onboarding** (5-question wizard on first login): `app/onboarding` + `student_onboarding`
+  table; responses injected into the Comrade system prompt for personalization.
+- **Guardian management** (student-managed on `/student/family`): `student_guardians` table, CRUD,
+  one-primary constraint, per-guardian invite code reusing the row-locked redeem flow.
+  `EmailService` interface + Noop provider (future Resend/SendGrid/SES/SMTP).
+- **Platform-wide counselors** (migration 008): counselors belong to the MindBridge platform, not a
+  school. `counselor_availability` slots; `GET /counselors/directory`, `/slots`, `POST /book`
+  (row-locked). Any student/parent from any school can book any verified counselor.
+- **Expanded Platform Admin** (migration 009): counselor register/verify/activate, user
+  disable/reset-password, tenant delete, AI model routing per feature
+  (chat/memory/title/risk/parent_insight), and cross-tenant platform analytics.
+- Migrations 007–009 (never editing prior ones). 41 passing tests.
 
 ### June 12, 2026 — Initial Setup
 - **Source:** Figma Make export from [Figma Design](https://www.figma.com/design/mouUmFRhGjj5mOwiUKrohb/Design-MindBridge-SaaS-App)

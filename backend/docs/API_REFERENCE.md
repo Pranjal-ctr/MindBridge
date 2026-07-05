@@ -250,3 +250,39 @@ Basic health check.
 
 ### GET `/health/db`
 Database connectivity check.
+
+---
+
+## 🆕 Phase 5 Endpoints
+
+### Google Sign-In (same JWT as email/password)
+- `POST /auth/google` — body `{ "id_token": "<google-id-token>" }`. Returns either
+  `{status:"authenticated", tokens, user}` (existing/linked account) or
+  `{status:"registration_required", registration_token, email, first_name, ...}` (new user).
+  Returns **503** if `GOOGLE_CLIENT_ID` is not configured.
+- `POST /auth/google/complete` — body `{ registration_token, role: "student"|"parent", phone, school_code, invite_code? }`.
+  Creates the account and returns the normal `{tokens, user}`. Staff roles are rejected (422).
+
+### Onboarding (student first-login questionnaire)
+- `GET /onboarding/` — current student's responses or `null`.
+- `POST /onboarding/` — body `{ class_level, help_goals[], hobbies[], strengths[], interaction_style }`.
+  Idempotent. Responses are injected into the Comrade system prompt for personalization.
+
+### Guardians (student-managed) — under `/linking`
+- `GET /linking/guardians` · `POST /linking/guardians` · `PATCH /linking/guardians/{id}` · `DELETE /linking/guardians/{id}`
+- `POST /linking/guardians/{id}/invite-code` — generate a code for that guardian to share.
+  Redeeming it (via `POST /linking/redeem`) marks the guardian `linked`.
+
+### Counselors (platform-wide directory + booking)
+- `GET /counselors/directory` — all active, verified counselors (any student/parent, cross-tenant).
+- `GET /counselors/{id}/slots` — a counselor's open, upcoming slots.
+- `POST /counselors/book` — body `{ slot_id }` (student). Books the slot and creates a session.
+- Counselor availability: `GET/POST /counselors/availability`, `DELETE /counselors/availability/{slot_id}`.
+
+### Platform Admin (role `admin`) — additions
+- `DELETE /admin/tenants/{id}` · `PATCH /admin/users/{id}` (disable / reset password).
+- `GET/POST /admin/counselors` · `PATCH /admin/counselors/{id}` (register / edit / verify / activate).
+- `GET /admin/ai/routes` · `PATCH /admin/ai/routes/{feature}` (per-feature model routing:
+  `comrade_chat`, `memory_extraction`, `title_generation`, `risk_detection`, `parent_insight`).
+- `GET /admin/analytics/platform` — cross-tenant KPIs (schools, students, parents, counselors,
+  active users, AI requests, AI cost, conversations, revenue).

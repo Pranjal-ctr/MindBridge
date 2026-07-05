@@ -12,9 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import require_role
 from app.admin.schemas import (
+    AIRouteListResponse,
+    AIRouteResponse,
+    AIRouteUpdate,
     AuditLogListResponse,
     BreakGlassConversationList,
     BreakGlassMessageList,
+    CounselorAdminResponse,
+    CounselorAdminUpdate,
+    CounselorCreate,
+    CounselorListResponse,
+    PlatformAnalytics,
     PlaygroundRequest,
     PlaygroundResponse,
     PromptCreate,
@@ -30,22 +38,31 @@ from app.admin.schemas import (
     TenantListResponse,
     TenantResponse,
     TenantUpdate,
+    UserAdminUpdate,
 )
 from app.admin.service import (
     activate_prompt,
     break_glass_get_messages,
     break_glass_list_conversations,
+    create_counselor,
     create_prompt,
     create_staff_user,
     create_tenant,
+    delete_tenant,
+    get_platform_analytics,
     get_tenant_detail,
+    list_ai_routes,
     list_audit_logs,
+    list_counselors,
     list_prompts,
     list_provider_configs,
     list_tenants,
     run_playground,
     set_tenant_subscription,
+    update_ai_route,
+    update_counselor,
     update_tenant,
+    update_user_admin,
 )
 from app.users.schemas import UserListResponse
 from app.users.service import list_tenant_users
@@ -186,6 +203,19 @@ async def break_glass_messages(
     return await break_glass_get_messages(db, admin_user.user_id, conversation_id, reason)
 
 
+@router.delete(
+    "/tenants/{tenant_id}",
+    status_code=204,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def remove_tenant(
+    tenant_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete a school/tenant (cascades to its users + data). Platform admin only."""
+    await delete_tenant(db, tenant_id)
+
+
 # -------------------------------------------------------------------
 # Staff Users
 # -------------------------------------------------------------------
@@ -203,6 +233,104 @@ async def create_staff_account(
     """Create a counselor or school_admin account for a tenant. Platform admin only.
     Staff roles cannot self-register via /auth/signup."""
     return await create_staff_user(db, payload)
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=StaffUserResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_user(
+    user_id: uuid.UUID,
+    payload: UserAdminUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Disable/enable a user or reset their password. Platform admin only."""
+    return await update_user_admin(db, user_id, payload)
+
+
+# -------------------------------------------------------------------
+# Counselors (platform-wide)
+# -------------------------------------------------------------------
+
+@router.get(
+    "/counselors",
+    response_model=CounselorListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_counselors(db: Annotated[AsyncSession, Depends(get_db)]):
+    """List all platform counselors (verified or not)."""
+    return await list_counselors(db)
+
+
+@router.post(
+    "/counselors",
+    response_model=CounselorAdminResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def register_counselor(
+    payload: CounselorCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Register a platform counselor. Platform admin only."""
+    return await create_counselor(db, payload)
+
+
+@router.patch(
+    "/counselors/{counselor_id}",
+    response_model=CounselorAdminResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def edit_counselor(
+    counselor_id: uuid.UUID,
+    payload: CounselorAdminUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Edit a counselor: profile, verify credentials, activate/deactivate, availability."""
+    return await update_counselor(db, counselor_id, payload)
+
+
+# -------------------------------------------------------------------
+# AI Settings (feature -> model routing)
+# -------------------------------------------------------------------
+
+@router.get(
+    "/ai/routes",
+    response_model=AIRouteListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_ai_routes(db: Annotated[AsyncSession, Depends(get_db)]):
+    """List AI feature routes (chat, memory, title, risk, parent insight)."""
+    return await list_ai_routes(db)
+
+
+@router.patch(
+    "/ai/routes/{feature_name}",
+    response_model=AIRouteResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def patch_ai_route(
+    feature_name: str,
+    payload: AIRouteUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Change the model routing for an AI feature (primary/fallback provider + model)."""
+    return await update_ai_route(db, feature_name, payload)
+
+
+# -------------------------------------------------------------------
+# Platform Analytics
+# -------------------------------------------------------------------
+
+@router.get(
+    "/analytics/platform",
+    response_model=PlatformAnalytics,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def platform_analytics(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Cross-tenant platform KPIs. Platform admin only."""
+    return await get_platform_analytics(db)
 
 
 # -------------------------------------------------------------------

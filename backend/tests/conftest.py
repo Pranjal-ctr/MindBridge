@@ -63,6 +63,25 @@ async def _create_database_and_schema() -> None:
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        # Seed AI provider + feature routes (migrations do this in real DBs;
+        # create_all does not run migration data steps).
+        await conn.execute(text(
+            "INSERT INTO ai_provider_configs (provider_name, display_name, is_enabled, default_model, extra_config) "
+            "VALUES ('gemini', 'Google Gemini', true, 'gemini-2.5-flash', '{}') "
+            "ON CONFLICT (provider_name) DO NOTHING"
+        ))
+        for feature, model in [
+            ("comrade_chat", "gemini-2.5-flash"),
+            ("memory_extraction", "gemini-2.5-flash-lite"),
+            ("title_generation", "gemini-2.5-flash-lite"),
+            ("risk_detection", "gemini-2.5-flash"),
+            ("parent_insight", "gemini-2.5-flash"),
+        ]:
+            await conn.execute(text(
+                "INSERT INTO ai_feature_routes "
+                "(feature_name, primary_provider, primary_model, max_retries, is_active) "
+                "VALUES (:f, 'gemini', :m, 2, true) ON CONFLICT (feature_name) DO NOTHING"
+            ), {"f": feature, "m": model})
     await test_engine.dispose()
 
 

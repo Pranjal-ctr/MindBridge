@@ -11,11 +11,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.schemas import (
+    AIRouteListResponse,
+    AIRouteResponse,
+    AIRouteUpdate,
     AuditLogResponse,
     BreakGlassConversation,
     BreakGlassConversationList,
     BreakGlassMessage,
     BreakGlassMessageList,
+    CounselorAdminResponse,
+    CounselorAdminUpdate,
+    CounselorCreate,
+    CounselorListResponse,
+    PlatformAnalytics,
     PlaygroundRequest,
     PlaygroundVariantResult,
     PromptCreate,
@@ -30,13 +38,18 @@ from app.admin.schemas import (
     TenantResponse,
     TenantStats,
     TenantUpdate,
+    UserAdminUpdate,
 )
 from database.models import (
+    AIFeatureRoute,
     AIPromptVersion,
     AIProviderConfig,
+    AIUsageLog,
     AuditLog,
     Conversation,
+    CounselorProfile,
     Message,
+    ParentProfile,
     StudentProfile,
     Subscription,
     Tenant,
@@ -327,6 +340,246 @@ async def create_prompt(db: AsyncSession, payload: PromptCreate) -> PromptRespon
     await db.flush()
     await db.refresh(prompt)
     return PromptResponse.model_validate(prompt)
+
+
+# -------------------------------------------------------------------
+# User administration
+# -------------------------------------------------------------------
+
+async def update_user_admin(
+    db: AsyncSession, user_id: uuid.UUID, payload: UserAdminUpdate
+) -> StaffUserResponse:
+    """Toggle active status and/or reset password for any user. Platform admin only."""
+    from app.auth.utils import hash_password
+
+    result = await db.execute(select(User).where(User.user_id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+    if payload.new_password:
+        user.password_hash = hash_password(payload.new_password)
+
+    await db.flush()
+    await db.refresh(user)
+    return StaffUserResponse.model_validate(user)
+
+
+async def delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Delete a school/tenant (cascades to its users and data)."""
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_id))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    await db.delete(tenant)
+    await db.flush()
+
+
+# -------------------------------------------------------------------
+# Counselor administration (platform-wide)
+# -------------------------------------------------------------------
+
+async def _get_or_create_platform_tenant(db: AsyncSession) -> Tenant:
+    """Counselors belong to the MindBridge platform tenant, not a school."""
+    result = await db.execute(select(Tenant).where(Tenant.school_code == "PLATFORM"))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        tenant = Tenant(
+            tenant_id=uuid.uuid4(),
+            tenant_name="MindBridge Platform",
+            tenant_type="organization",
+            school_code="PLATFORM",
+            status="active",
+        )
+        db.add(tenant)
+        await db.flush()
+    return tenant
+
+
+def _counselor_to_admin_response(
+    counselor: CounselorProfile, user: User
+) -> CounselorAdminResponse:
+    return CounselorAdminResponse(
+        counselor_id=counselor.counselor_id,
+        user_id=user.user_id,
+        name=f"{user.first_name} {user.last_name}",
+        email=user.email,
+        phone=user.phone,
+        bio=counselor.bio,
+        qualification=counselor.qualification,
+        specializations=counselor.specializations or [],
+        languages=counselor.languages or [],
+        experience_years=counselor.experience_years,
+        rating=float(counselor.rating) if counselor.rating is not None else None,
+        is_verified=counselor.is_verified,
+        is_available=counselor.is_available,
+        is_active=user.is_active,
+    )
+
+
+async def create_counselor(db: AsyncSession, payload: CounselorCreate) -> CounselorAdminResponse:
+    """Register a platform counselor (user under the platform tenant + profile)."""
+    from app.auth.utils import hash_password
+
+    tenant = await _get_or_create_platform_tenant(db)
+
+    email = payload.email.lower()
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
+        )
+
+    user = User(
+        user_id=uuid.uuid4(),
+        tenant_id=tenant.tenant_id,
+        email=email,
+        password_hash=hash_password(payload.password),
+        role="counselor",
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        phone=payload.phone,
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+
+    counselor = CounselorProfile(
+        counselor_id=uuid.uuid4(),
+        user_id=user.user_id,
+        bio=payload.bio,
+        qualification=payload.qualification,
+        specializations=payload.specializations,
+        languages=payload.languages,
+        experience_years=payload.experience_years,
+        is_verified=payload.is_verified,
+        is_available=True,
+    )
+    db.add(counselor)
+    await db.flush()
+    return _counselor_to_admin_response(counselor, user)
+
+
+async def list_counselors(db: AsyncSession) -> CounselorListResponse:
+    """List all platform counselors (verified or not) for management."""
+    result = await db.execute(
+        select(CounselorProfile, User)
+        .join(User, CounselorProfile.user_id == User.user_id)
+        .order_by(User.last_name.asc())
+    )
+    rows = result.all()
+    items = [_counselor_to_admin_response(c, u) for c, u in rows]
+    return CounselorListResponse(counselors=items, total=len(items))
+
+
+async def update_counselor(
+    db: AsyncSession, counselor_id: uuid.UUID, payload: CounselorAdminUpdate
+) -> CounselorAdminResponse:
+    """Edit a counselor's profile, verification, availability, or active status."""
+    result = await db.execute(
+        select(CounselorProfile, User)
+        .join(User, CounselorProfile.user_id == User.user_id)
+        .where(CounselorProfile.counselor_id == counselor_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Counselor not found")
+    counselor, user = row
+
+    data = payload.model_dump(exclude_unset=True)
+    if "is_active" in data:
+        user.is_active = data.pop("is_active")
+    for field, value in data.items():
+        setattr(counselor, field, value)
+
+    await db.flush()
+    await db.refresh(counselor)
+    await db.refresh(user)
+    return _counselor_to_admin_response(counselor, user)
+
+
+# -------------------------------------------------------------------
+# AI Settings (feature -> model routing)
+# -------------------------------------------------------------------
+
+async def list_ai_routes(db: AsyncSession) -> AIRouteListResponse:
+    """List all AI feature routes (chat, memory, title, risk, parent insight, ...)."""
+    result = await db.execute(select(AIFeatureRoute).order_by(AIFeatureRoute.feature_name))
+    routes = result.scalars().all()
+    return AIRouteListResponse(routes=[AIRouteResponse.model_validate(r) for r in routes])
+
+
+async def update_ai_route(
+    db: AsyncSession, feature_name: str, payload: AIRouteUpdate
+) -> AIRouteResponse:
+    """Update the model routing for a feature (primary/fallback provider + model)."""
+    result = await db.execute(
+        select(AIFeatureRoute).where(AIFeatureRoute.feature_name == feature_name)
+    )
+    route = result.scalar_one_or_none()
+    if not route:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature route not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(route, field, value)
+
+    await db.flush()
+    await db.refresh(route)
+    return AIRouteResponse.model_validate(route)
+
+
+# -------------------------------------------------------------------
+# Platform Analytics
+# -------------------------------------------------------------------
+
+async def get_platform_analytics(db: AsyncSession) -> PlatformAnalytics:
+    """Cross-tenant platform KPIs."""
+    from datetime import datetime, timedelta, timezone
+
+    async def _count(query) -> int:
+        return (await db.execute(query)).scalar() or 0
+
+    total_schools = await _count(
+        select(func.count()).select_from(Tenant).where(Tenant.tenant_type == "school")
+    )
+    total_students = await _count(
+        select(func.count()).select_from(User).where(User.role == "student", User.is_active == True)  # noqa: E712
+    )
+    total_parents = await _count(
+        select(func.count()).select_from(User).where(User.role == "parent", User.is_active == True)  # noqa: E712
+    )
+    total_counselors = await _count(
+        select(func.count()).select_from(User).where(User.role == "counselor", User.is_active == True)  # noqa: E712
+    )
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    active_users = await _count(
+        select(func.count()).select_from(User).where(User.last_login >= cutoff)
+    )
+
+    ai_requests = await _count(select(func.count()).select_from(AIUsageLog))
+    ai_cost = (await db.execute(
+        select(func.coalesce(func.sum(AIUsageLog.estimated_cost_usd), 0))
+    )).scalar() or 0
+    conversation_count = await _count(select(func.count()).select_from(Conversation))
+    revenue = (await db.execute(
+        select(func.coalesce(func.sum(Subscription.amount), 0)).where(Subscription.status == "active")
+    )).scalar() or 0
+
+    return PlatformAnalytics(
+        total_schools=total_schools,
+        total_students=total_students,
+        total_parents=total_parents,
+        total_counselors=total_counselors,
+        active_users=active_users,
+        ai_requests=ai_requests,
+        ai_cost_usd=float(ai_cost),
+        conversation_count=conversation_count,
+        revenue_usd=float(revenue),
+    )
 
 
 # -------------------------------------------------------------------

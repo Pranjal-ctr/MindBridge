@@ -18,6 +18,11 @@ import {
   ShieldAlert,
   Users,
   X,
+  BarChart3,
+  Stethoscope,
+  Cpu,
+  Check,
+  BadgeCheck,
 } from 'lucide-react';
 import api from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
@@ -78,13 +83,31 @@ interface BreakGlassMessage {
   created_at: string;
 }
 
-type Tab = 'schools' | 'chat-access';
+type Tab = 'analytics' | 'schools' | 'counselors' | 'ai-settings' | 'chat-access';
+
+// Admin-only response shapes (kept local to this dashboard)
+interface PlatformAnalytics {
+  total_schools: number; total_students: number; total_parents: number;
+  total_counselors: number; active_users: number; ai_requests: number;
+  ai_cost_usd: number; conversation_count: number; revenue_usd: number;
+}
+interface AdminCounselor {
+  counselor_id: string; user_id: string; name: string; email: string;
+  qualification: string | null; specializations: string[]; languages: string[];
+  experience_years: number | null; rating: number | null;
+  is_verified: boolean; is_available: boolean; is_active: boolean;
+}
+interface AIRoute {
+  feature_name: string; primary_provider: string; primary_model: string;
+  fallback_provider: string | null; fallback_model: string | null;
+  max_retries: number; is_active: boolean;
+}
 
 // ── Component ─────────────────────────────────────────────────────────
 
 export function PlatformAdminDashboard() {
   const { user, logout } = useAuth();
-  const [tab, setTab] = useState<Tab>('schools');
+  const [tab, setTab] = useState<Tab>('analytics');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50">
@@ -119,8 +142,11 @@ export function PlatformAdminDashboard() {
       <div className="max-w-6xl mx-auto px-6 pt-6">
         <div className="flex gap-2 mb-6">
           {([
+            { id: 'analytics' as Tab, icon: BarChart3, label: 'Analytics' },
             { id: 'schools' as Tab, icon: Building2, label: 'Schools' },
-            { id: 'chat-access' as Tab, icon: ShieldAlert, label: 'Chat Access (Break-Glass)' },
+            { id: 'counselors' as Tab, icon: Stethoscope, label: 'Counselors' },
+            { id: 'ai-settings' as Tab, icon: Cpu, label: 'AI Settings' },
+            { id: 'chat-access' as Tab, icon: ShieldAlert, label: 'Chat Access' },
           ]).map((t) => (
             <button
               key={t.id}
@@ -134,7 +160,11 @@ export function PlatformAdminDashboard() {
           ))}
         </div>
 
-        {tab === 'schools' ? <SchoolsTab /> : <ChatAccessTab />}
+        {tab === 'analytics' && <AnalyticsTab />}
+        {tab === 'schools' && <SchoolsTab />}
+        {tab === 'counselors' && <CounselorsTab />}
+        {tab === 'ai-settings' && <AISettingsTab />}
+        {tab === 'chat-access' && <ChatAccessTab />}
       </div>
     </div>
   );
@@ -628,6 +658,274 @@ function ChatAccessTab() {
               </div>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Analytics Tab ─────────────────────────────────────────────────────
+
+function AnalyticsTab() {
+  const [data, setData] = useState<PlatformAnalytics | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<PlatformAnalytics>('/admin/analytics/platform')
+      .then((res) => setData(res.data))
+      .catch(() => setError('Failed to load analytics'));
+  }, []);
+
+  if (error) return <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{error}</div>;
+  if (!data) return <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+
+  const cards = [
+    { label: 'Schools', value: data.total_schools },
+    { label: 'Students', value: data.total_students },
+    { label: 'Parents', value: data.total_parents },
+    { label: 'Counselors', value: data.total_counselors },
+    { label: 'Active Users (30d)', value: data.active_users },
+    { label: 'Conversations', value: data.conversation_count },
+    { label: 'AI Requests', value: data.ai_requests },
+    { label: 'AI Cost', value: `$${data.ai_cost_usd.toFixed(4)}` },
+    { label: 'Revenue (active subs)', value: `$${data.revenue_usd.toLocaleString()}` },
+  ];
+
+  return (
+    <div>
+      <h2 className="font-semibold mb-4">Platform Overview</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        {cards.map((c) => (
+          <div key={c.label} className="bg-white rounded-2xl border border-border p-5">
+            <p className="text-3xl font-semibold">{c.value}</p>
+            <p className="text-sm text-muted-foreground mt-1">{c.label}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Counselors Tab ────────────────────────────────────────────────────
+
+const COUNSELOR_FORM_INIT = {
+  email: '', password: '', first_name: '', last_name: '', phone: '',
+  qualification: '', bio: '', specializations: '', languages: '', experience_years: 0, is_verified: true,
+};
+
+function CounselorsTab() {
+  const [counselors, setCounselors] = useState<AdminCounselor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ ...COUNSELOR_FORM_INIT });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data } = await api.get<{ counselors: AdminCounselor[] }>('/admin/counselors');
+      setCounselors(data.counselors);
+    } catch {
+      setError('Failed to load counselors');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const patch = async (id: string, body: Partial<AdminCounselor>) => {
+    setBusy(true);
+    try {
+      await api.patch(`/admin/counselors/${id}`, body);
+      await load();
+    } catch {
+      setError('Update failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/admin/counselors', {
+        email: form.email, password: form.password,
+        first_name: form.first_name, last_name: form.last_name, phone: form.phone || null,
+        qualification: form.qualification || null, bio: form.bio || null,
+        specializations: form.specializations ? form.specializations.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        languages: form.languages ? form.languages.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        experience_years: form.experience_years || null, is_verified: form.is_verified,
+      });
+      setShowCreate(false);
+      setForm({ ...COUNSELOR_FORM_INIT });
+      await load();
+    } catch (err: any) {
+      setError(err?.response?.data?.detail ?? 'Could not register counselor');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{error}</div>}
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="font-semibold">Platform Counselors ({counselors.length})</h2>
+        <button onClick={() => setShowCreate(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 transition">
+          <Plus className="w-4 h-4" /> Register Counselor
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className="space-y-3">
+          {counselors.map((c) => (
+            <div key={c.counselor_id} className="bg-white rounded-2xl border border-border p-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{c.name}</span>
+                    {c.is_verified
+                      ? <span className="flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs"><BadgeCheck className="w-3 h-3" /> Verified</span>
+                      : <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">Unverified</span>}
+                    {!c.is_active && <span className="px-2 py-0.5 bg-slate-200 text-slate-600 rounded-full text-xs">Disabled</span>}
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-0.5">
+                    {c.email}{c.qualification ? ` • ${c.qualification}` : ''}
+                    {c.specializations.length ? ` • ${c.specializations.join(', ')}` : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => patch(c.counselor_id, { is_verified: !c.is_verified })} disabled={busy}
+                    className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition">
+                    {c.is_verified ? 'Unverify' : 'Verify'}
+                  </button>
+                  <button onClick={() => patch(c.counselor_id, { is_active: !c.is_active })} disabled={busy}
+                    className={`px-3 py-1.5 text-sm rounded-lg transition ${c.is_active ? 'text-red-600 bg-red-50 hover:bg-red-100' : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}`}>
+                    {c.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {counselors.length === 0 && <p className="text-sm text-muted-foreground">No counselors yet.</p>}
+        </div>
+      )}
+
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold">Register Counselor</h3>
+              <button onClick={() => setShowCreate(false)}><X className="w-5 h-5 text-muted-foreground" /></button>
+            </div>
+            <form onSubmit={create} className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <input required placeholder="First name" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="px-3 py-2 border border-border rounded-xl bg-input-background" />
+                <input required placeholder="Last name" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="px-3 py-2 border border-border rounded-xl bg-input-background" />
+              </div>
+              <input required type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full px-3 py-2 border border-border rounded-xl bg-input-background" />
+              <input required type="password" placeholder="Temporary password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full px-3 py-2 border border-border rounded-xl bg-input-background" />
+              <input placeholder="Qualification (e.g. Licensed Clinical Psychologist)" value={form.qualification} onChange={(e) => setForm({ ...form, qualification: e.target.value })} className="w-full px-3 py-2 border border-border rounded-xl bg-input-background" />
+              <textarea placeholder="Short bio" value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} rows={2} className="w-full px-3 py-2 border border-border rounded-xl bg-input-background resize-none" />
+              <div className="grid grid-cols-2 gap-3">
+                <input placeholder="Specializations (comma-sep)" value={form.specializations} onChange={(e) => setForm({ ...form, specializations: e.target.value })} className="px-3 py-2 border border-border rounded-xl bg-input-background" />
+                <input placeholder="Languages (comma-sep)" value={form.languages} onChange={(e) => setForm({ ...form, languages: e.target.value })} className="px-3 py-2 border border-border rounded-xl bg-input-background" />
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2">Experience (yrs)
+                  <input type="number" min={0} value={form.experience_years} onChange={(e) => setForm({ ...form, experience_years: parseInt(e.target.value) || 0 })} className="w-20 px-2 py-1 border border-border rounded-lg bg-input-background" />
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={form.is_verified} onChange={(e) => setForm({ ...form, is_verified: e.target.checked })} /> Verified
+                </label>
+              </div>
+              <button type="submit" disabled={busy} className="w-full py-2.5 bg-primary text-white rounded-xl font-medium disabled:opacity-50">
+                {busy ? 'Registering…' : 'Register Counselor'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AI Settings Tab ───────────────────────────────────────────────────
+
+const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
+
+function AISettingsTab() {
+  const [routes, setRoutes] = useState<AIRoute[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingFeature, setSavingFeature] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data } = await api.get<{ routes: AIRoute[] }>('/admin/ai/routes');
+      setRoutes(data.routes);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setModel = async (feature: string, model: string) => {
+    setSavingFeature(feature);
+    setNotice(null);
+    try {
+      await api.patch(`/admin/ai/routes/${feature}`, { primary_model: model });
+      setNotice(`Updated ${feature} → ${model}`);
+      await load();
+    } finally {
+      setSavingFeature(null);
+    }
+  };
+
+  const label = (f: string) => f.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-semibold">AI Model Routing</h2>
+        <Link to="/admin/playground" className="flex items-center gap-2 px-4 py-2 border border-border rounded-xl text-sm hover:border-primary/50 transition">
+          <FlaskConical className="w-4 h-4 text-primary" /> Test in Playground
+        </Link>
+      </div>
+      {notice && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-sm flex items-center gap-2"><Check className="w-4 h-4" /> {notice}</div>}
+
+      {loading ? (
+        <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-border divide-y divide-border">
+          {routes.map((r) => (
+            <div key={r.feature_name} className="p-4 flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <div className="font-medium">{label(r.feature_name)}</div>
+                <div className="text-xs text-muted-foreground">
+                  {r.primary_provider} · fallback: {r.fallback_model || 'none'}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <select value={r.primary_model} onChange={(e) => setModel(r.feature_name, e.target.value)}
+                  disabled={savingFeature === r.feature_name}
+                  className="px-3 py-2 border border-border rounded-lg text-sm bg-input-background">
+                  {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  {!MODELS.includes(r.primary_model) && <option value={r.primary_model}>{r.primary_model}</option>}
+                </select>
+                {savingFeature === r.feature_name && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

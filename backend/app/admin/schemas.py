@@ -158,6 +158,114 @@ class StaffUserResponse(BaseModel):
 
 
 # -------------------------------------------------------------------
+# User administration (disable / reset password)
+# -------------------------------------------------------------------
+
+class UserAdminUpdate(BaseModel):
+    """Platform admin toggles active status and/or resets a user's password."""
+    is_active: bool | None = None
+    new_password: str | None = Field(None, min_length=8, max_length=128)
+
+
+# -------------------------------------------------------------------
+# Counselor administration (platform-wide)
+# -------------------------------------------------------------------
+
+class CounselorCreate(BaseModel):
+    """Register a platform counselor."""
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    phone: str | None = Field(None, max_length=20)
+    bio: str | None = None
+    qualification: str | None = Field(None, max_length=200)
+    specializations: list[str] = []
+    languages: list[str] = []
+    experience_years: int | None = Field(None, ge=0)
+    is_verified: bool = False
+
+
+class CounselorAdminUpdate(BaseModel):
+    """Edit a counselor's profile / verification / availability / active status."""
+    bio: str | None = None
+    qualification: str | None = Field(None, max_length=200)
+    specializations: list[str] | None = None
+    languages: list[str] | None = None
+    experience_years: int | None = Field(None, ge=0)
+    is_verified: bool | None = None
+    is_available: bool | None = None
+    is_active: bool | None = None
+
+
+class CounselorAdminResponse(BaseModel):
+    counselor_id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    email: str
+    phone: str | None = None
+    bio: str | None = None
+    qualification: str | None = None
+    specializations: list[str] = []
+    languages: list[str] = []
+    experience_years: int | None = None
+    rating: float | None = None
+    is_verified: bool
+    is_available: bool
+    is_active: bool
+
+
+class CounselorListResponse(BaseModel):
+    counselors: list[CounselorAdminResponse]
+    total: int
+
+
+# -------------------------------------------------------------------
+# AI Settings (feature -> model routing)
+# -------------------------------------------------------------------
+
+class AIRouteResponse(BaseModel):
+    feature_name: str
+    primary_provider: str
+    primary_model: str
+    fallback_provider: str | None = None
+    fallback_model: str | None = None
+    max_retries: int
+    is_active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class AIRouteUpdate(BaseModel):
+    primary_provider: str | None = Field(None, max_length=50)
+    primary_model: str | None = Field(None, max_length=100)
+    fallback_provider: str | None = Field(None, max_length=50)
+    fallback_model: str | None = Field(None, max_length=100)
+    max_retries: int | None = Field(None, ge=0, le=5)
+    is_active: bool | None = None
+
+
+class AIRouteListResponse(BaseModel):
+    routes: list[AIRouteResponse]
+
+
+# -------------------------------------------------------------------
+# Platform Analytics
+# -------------------------------------------------------------------
+
+class PlatformAnalytics(BaseModel):
+    total_schools: int
+    total_students: int
+    total_parents: int
+    total_counselors: int
+    active_users: int          # logged in within the last 30 days
+    ai_requests: int
+    ai_cost_usd: float
+    conversation_count: int
+    revenue_usd: float         # sum of active subscription amounts
+
+
+# -------------------------------------------------------------------
 # AI Prompts
 # -------------------------------------------------------------------
 
