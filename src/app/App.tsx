@@ -10,6 +10,8 @@ import { BookCounselor } from './components/BookCounselor';
 import { LoginSignup } from './components/LoginSignup';
 import { StudentInviteCode } from './components/StudentInviteCode';
 import { StudentGrowthProfile } from './components/StudentGrowthProfile';
+import { AdminPlayground } from './components/AdminPlayground';
+import { PlatformAdminDashboard } from './components/PlatformAdminDashboard';
 
 export default function App() {
   return (
@@ -74,6 +76,23 @@ export default function App() {
             element={
               <ProtectedRoute roles={['student']}>
                 <StudentGrowthProfile />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <PlatformAdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/playground"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <AdminPlayground />
               </ProtectedRoute>
             }
           />

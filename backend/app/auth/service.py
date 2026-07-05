@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +57,24 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
 
     # 2. Resolve tenant (counselors get default tenant if no school_code)
     tenant = await _resolve_tenant(db, payload.school_code)
+
+    # 2b. Seat enforcement: student signups are capped by the school's seat limit
+    if payload.role == "student":
+        seat_count = await db.execute(
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.tenant_id == tenant.tenant_id,
+                User.role == "student",
+                User.is_active == True,  # noqa: E712
+            )
+        )
+        if (seat_count.scalar() or 0) >= tenant.student_limit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your school has reached its student seat limit. "
+                       "Please contact your school administrator.",
+            )
 
     # 3. Check duplicate email (normalized to lowercase)
     email = payload.email.lower()

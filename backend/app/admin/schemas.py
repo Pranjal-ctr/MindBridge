@@ -5,7 +5,7 @@ MindBridge Admin Schemas
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -49,6 +49,83 @@ class TenantResponse(BaseModel):
 class TenantListResponse(BaseModel):
     tenants: list[TenantResponse]
     total: int
+
+
+# -------------------------------------------------------------------
+# Tenant Detail / Subscriptions (super-admin school management)
+# -------------------------------------------------------------------
+
+class TenantStats(BaseModel):
+    """Per-role user counts and seat usage for a tenant."""
+    students: int = 0
+    parents: int = 0
+    counselors: int = 0
+    school_admins: int = 0
+    seats_used: int = 0
+    seat_limit: int = 0
+
+
+class SubscriptionCreate(BaseModel):
+    """Create/replace a tenant's subscription."""
+    plan_name: str = Field(..., pattern=r"^(free|starter|professional|enterprise)$")
+    student_limit: int = Field(..., ge=1)
+    billing_cycle: str = Field(default="annual", pattern=r"^(monthly|quarterly|annual)$")
+    amount: float = Field(..., ge=0)
+    start_date: date
+    renewal_date: date | None = None
+
+
+class SubscriptionResponse(BaseModel):
+    subscription_id: uuid.UUID
+    tenant_id: uuid.UUID
+    plan_name: str
+    student_limit: int
+    billing_cycle: str
+    amount: float
+    start_date: date
+    renewal_date: date | None = None
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
+class TenantDetailResponse(TenantResponse):
+    """Tenant with usage stats and active subscription."""
+    stats: TenantStats = Field(default_factory=TenantStats)
+    subscription: SubscriptionResponse | None = None
+
+
+# -------------------------------------------------------------------
+# Break-Glass Chat Access (severe cases only, always audit-logged)
+# -------------------------------------------------------------------
+
+class BreakGlassConversation(BaseModel):
+    conversation_id: uuid.UUID
+    title: str | None = None
+    total_messages: int
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BreakGlassConversationList(BaseModel):
+    student_id: uuid.UUID
+    student_name: str
+    conversations: list[BreakGlassConversation]
+
+
+class BreakGlassMessage(BaseModel):
+    message_id: uuid.UUID
+    sender_type: str
+    message_text: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BreakGlassMessageList(BaseModel):
+    conversation_id: uuid.UUID
+    messages: list[BreakGlassMessage]
 
 
 # -------------------------------------------------------------------
@@ -106,6 +183,60 @@ class PromptResponse(BaseModel):
 
 class PromptListResponse(BaseModel):
     prompts: list[PromptResponse]
+
+
+# -------------------------------------------------------------------
+# AI Playground
+# -------------------------------------------------------------------
+
+class PlaygroundVariant(BaseModel):
+    """One model + prompt combination to test."""
+    provider: str = Field(default="gemini", max_length=50)
+    model: str = Field(..., max_length=100)
+    prompt_version_id: uuid.UUID | None = Field(
+        None, description="Use this stored prompt version as the system prompt"
+    )
+    prompt_override: str | None = Field(
+        None, max_length=20000, description="Raw system prompt (takes precedence over prompt_version_id)"
+    )
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+
+
+class PlaygroundRequest(BaseModel):
+    """Run a test message against one or more model/prompt variants."""
+    message: str = Field(..., min_length=1, max_length=4000)
+    variants: list[PlaygroundVariant] = Field(..., min_length=1, max_length=3)
+
+
+class PlaygroundVariantResult(BaseModel):
+    """Result of a single playground variant run."""
+    provider: str
+    model: str
+    prompt_version: str | None = None
+    text: str | None = None
+    latency_ms: int
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    estimated_cost_usd: float | None = None
+    error: str | None = None
+
+
+class PlaygroundResponse(BaseModel):
+    results: list[PlaygroundVariantResult]
+
+
+class ProviderConfigResponse(BaseModel):
+    """Registered AI provider."""
+    provider_name: str
+    display_name: str
+    is_enabled: bool
+    default_model: str
+
+    model_config = {"from_attributes": True}
+
+
+class ProviderListResponse(BaseModel):
+    providers: list[ProviderConfigResponse]
 
 
 # -------------------------------------------------------------------

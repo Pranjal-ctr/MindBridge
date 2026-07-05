@@ -50,7 +50,7 @@ export function getDashboardRoute(role: string): string {
     parent: '/parent',
     counselor: '/counselor',
     school_admin: '/school',
-    mindbridge_admin: '/admin',
+    admin: '/admin',
   };
   return routes[role] || '/student';
 }

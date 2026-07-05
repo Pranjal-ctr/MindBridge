@@ -13,28 +13,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import require_role
 from app.admin.schemas import (
     AuditLogListResponse,
+    BreakGlassConversationList,
+    BreakGlassMessageList,
+    PlaygroundRequest,
+    PlaygroundResponse,
     PromptCreate,
     PromptListResponse,
     PromptResponse,
+    ProviderListResponse,
     StaffUserCreate,
     StaffUserResponse,
+    SubscriptionCreate,
+    SubscriptionResponse,
     TenantCreate,
+    TenantDetailResponse,
     TenantListResponse,
     TenantResponse,
     TenantUpdate,
 )
 from app.admin.service import (
+    activate_prompt,
+    break_glass_get_messages,
+    break_glass_list_conversations,
     create_prompt,
     create_staff_user,
     create_tenant,
+    get_tenant_detail,
     list_audit_logs,
     list_prompts,
+    list_provider_configs,
     list_tenants,
+    run_playground,
+    set_tenant_subscription,
     update_tenant,
 )
+from app.users.schemas import UserListResponse
+from app.users.service import list_tenant_users
+from database.models import User
 from database.session import get_db
 
 router = APIRouter()
+
+# Authenticated platform admin (require_role returns the current user)
+AdminUser = Annotated[User, Depends(require_role("admin"))]
 
 
 # -------------------------------------------------------------------
@@ -78,6 +99,91 @@ async def update_tenant_endpoint(
 ):
     """Update a tenant. Platform admin only."""
     return await update_tenant(db, tenant_id, payload)
+
+
+@router.get(
+    "/tenants/{tenant_id}",
+    response_model=TenantDetailResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_tenant(
+    tenant_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Tenant detail: user counts, seat usage, active subscription. Platform admin only."""
+    return await get_tenant_detail(db, tenant_id)
+
+
+@router.get(
+    "/tenants/{tenant_id}/users",
+    response_model=UserListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_tenant_users(
+    tenant_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    role: str | None = Query(None, pattern=r"^(student|parent|counselor|school_admin|admin)$"),
+):
+    """List a tenant's users. Platform admin only."""
+    users, total = await list_tenant_users(db, tenant_id, page, page_size, role)
+    return UserListResponse(users=users, total=total, page=page, page_size=page_size)
+
+
+@router.post(
+    "/tenants/{tenant_id}/subscription",
+    response_model=SubscriptionResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_tenant_subscription(
+    tenant_id: uuid.UUID,
+    payload: SubscriptionCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Set a tenant's subscription (plan, seats, period). Supersedes the previous one."""
+    return await set_tenant_subscription(db, tenant_id, payload)
+
+
+# -------------------------------------------------------------------
+# Break-Glass Chat Access (severe cases only, always audit-logged)
+# -------------------------------------------------------------------
+
+@router.get(
+    "/students/{student_id}/conversations",
+    response_model=BreakGlassConversationList,
+)
+async def break_glass_conversations(
+    student_id: uuid.UUID,
+    admin_user: AdminUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    reason: str = Query(..., min_length=10, max_length=500,
+                        description="Why this access is needed (recorded in the audit log)"),
+):
+    """
+    BREAK-GLASS: list a student's private conversations for crisis review.
+    Platform admin only. Every call is audit-logged with the stated reason.
+    """
+    return await break_glass_list_conversations(db, admin_user.user_id, student_id, reason)
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=BreakGlassMessageList,
+)
+async def break_glass_messages(
+    conversation_id: uuid.UUID,
+    admin_user: AdminUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    reason: str = Query(..., min_length=10, max_length=500,
+                        description="Why this access is needed (recorded in the audit log)"),
+):
+    """
+    BREAK-GLASS: read a student conversation transcript for crisis review.
+    Platform admin only. Every call is audit-logged with the stated reason.
+    """
+    return await break_glass_get_messages(db, admin_user.user_id, conversation_id, reason)
 
 
 # -------------------------------------------------------------------
@@ -126,6 +232,52 @@ async def create_new_prompt(
 ):
     """Create a new AI prompt version."""
     return await create_prompt(db, payload)
+
+
+# -------------------------------------------------------------------
+# AI Playground
+# -------------------------------------------------------------------
+
+@router.patch(
+    "/prompts/{prompt_id}/activate",
+    response_model=PromptResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def activate_prompt_version(
+    prompt_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Activate a prompt version globally; deactivates other versions of the same prompt."""
+    return await activate_prompt(db, prompt_id)
+
+
+@router.get(
+    "/ai/providers",
+    response_model=ProviderListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_ai_providers(db: Annotated[AsyncSession, Depends(get_db)]):
+    """List registered AI providers and their default models."""
+    providers = await list_provider_configs(db)
+    return ProviderListResponse(providers=providers)
+
+
+@router.post(
+    "/ai/playground",
+    response_model=PlaygroundResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def ai_playground(
+    payload: PlaygroundRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Internal AI playground: run one test message against up to 3
+    model/prompt-version variants and compare responses, latency,
+    tokens, and cost -- before activating a prompt globally.
+    """
+    results = await run_playground(db, payload)
+    return PlaygroundResponse(results=results)
 
 
 # -------------------------------------------------------------------
