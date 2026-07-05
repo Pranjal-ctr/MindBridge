@@ -1,0 +1,518 @@
+Table tenants {
+  tenant_id uuid [pk]
+  tenant_name varchar
+  tenant_type varchar
+  school_code varchar
+  subscription_plan varchar
+  student_limit int
+  active_students int
+  status varchar
+  created_at timestamp
+}
+
+Table users {
+  user_id uuid [pk]
+  tenant_id uuid
+
+  email varchar [unique]
+  password_hash text
+
+  role varchar
+
+  first_name varchar
+  last_name varchar
+
+  phone varchar
+  profile_image text
+
+  is_active boolean
+  last_login timestamp
+
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table classes {
+  class_id uuid [pk]
+
+  tenant_id uuid
+
+  class_name varchar
+  section varchar
+  academic_year varchar
+
+  created_at timestamp
+}
+
+Table student_profiles {
+  student_id uuid [pk]
+
+  user_id uuid [unique]
+  class_id uuid
+
+  admission_number varchar
+
+  age int
+  gender varchar
+
+  wellness_score decimal
+  risk_level varchar
+
+  joined_date date
+
+  created_at timestamp
+}
+
+Table parent_profiles {
+  parent_id uuid [pk]
+
+  user_id uuid [unique]
+
+  occupation varchar
+  relationship_type varchar
+
+  created_at timestamp
+}
+
+Table counselor_profiles {
+  counselor_id uuid [pk]
+
+  user_id uuid [unique]
+
+  specialization varchar
+  experience_years int
+  license_number varchar
+
+  rating decimal
+
+  bio text
+
+  created_at timestamp
+}
+
+Table school_admin_profiles {
+  admin_id uuid [pk]
+
+  user_id uuid [unique]
+
+  designation varchar
+
+  created_at timestamp
+}
+
+Table student_parent_links {
+  link_id uuid [pk]
+
+  student_id uuid
+  parent_id uuid
+
+  relationship varchar
+
+  created_at timestamp
+}
+
+Table conversations {
+  conversation_id uuid [pk]
+
+  student_id uuid
+
+  title varchar
+
+  ai_generated_title boolean
+
+  is_archived boolean
+
+  total_messages int
+
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table messages {
+  message_id uuid [pk]
+
+  conversation_id uuid
+
+  sender_type varchar
+
+  sender_id uuid [note: 'user_id if human, null if AI']
+
+  message_text text
+
+  token_count int
+
+  sentiment varchar
+
+  created_at timestamp
+}
+
+
+
+Table conversation_tags {
+  tag_id uuid [pk]
+
+  conversation_id uuid
+
+  tag_name varchar
+
+  confidence_score decimal
+
+  created_at timestamp
+}
+
+
+
+Table risk_assessments {
+  risk_id uuid [pk]
+
+  student_id uuid
+  conversation_id uuid
+
+  risk_score decimal
+
+  risk_level varchar
+
+  trigger_reason text
+
+  generated_by varchar
+
+  created_at timestamp
+}
+
+
+
+Table memory_items {
+  memory_id uuid [pk]
+
+  student_id uuid
+
+  memory_type varchar
+
+  content text
+
+  importance_score decimal
+
+  created_at timestamp
+}
+
+Table wellness_records {
+  record_id uuid [pk]
+
+  student_id uuid
+
+  mood_score int
+  stress_score int
+  confidence_score int
+  anxiety_score int
+  energy_score int
+
+  date_recorded date
+
+  created_at timestamp
+}
+
+Table goals {
+  goal_id uuid [pk]
+
+  student_id uuid
+
+  goal_title varchar
+
+  goal_description text
+
+  status varchar
+
+  target_date date
+
+  created_at timestamp
+}
+
+Table journal_entries {
+  journal_id uuid [pk]
+
+  student_id uuid
+
+  title varchar
+
+  content text
+
+  mood_score int
+
+  created_at timestamp
+}
+
+
+
+Table parent_insight_history {
+  insight_id uuid [pk]
+
+  student_id uuid
+
+  wellness_score decimal
+
+  risk_level varchar
+
+  summary text
+
+  recommendations text
+
+  generated_at timestamp
+}
+
+Table counselor_sessions {
+  counselor_session_id uuid [pk]
+
+  student_id uuid
+
+  counselor_id uuid
+
+  scheduled_at timestamp
+
+  status varchar
+
+  ai_summary text
+
+  created_at timestamp
+}
+
+Table counselor_notes {
+  note_id uuid [pk]
+
+  counselor_session_id uuid
+
+  counselor_id uuid
+
+  note_text text
+
+  created_at timestamp
+}
+
+Table student_timeline {
+  event_id uuid [pk]
+
+  student_id uuid
+
+  event_type varchar
+
+  reference_id uuid
+
+  event_description text
+
+  created_at timestamp
+}
+
+Table analytics_snapshots {
+  snapshot_id uuid [pk]
+
+  tenant_id uuid
+
+  snapshot_month date
+
+  total_students int
+
+  avg_wellness decimal
+
+  avg_risk decimal
+
+  engagement_rate decimal
+
+  created_at timestamp
+}
+
+Table notifications {
+  notification_id uuid [pk]
+
+  user_id uuid
+
+  title varchar
+
+  message text
+
+  is_read boolean
+
+  created_at timestamp
+}
+
+Table subscriptions {
+  subscription_id uuid [pk]
+
+  tenant_id uuid
+
+  plan_name varchar
+
+  student_limit int
+
+  active_students int
+
+  billing_cycle varchar
+
+  amount decimal
+
+  start_date date
+
+  renewal_date date
+
+  status varchar
+
+  created_at timestamp
+}
+
+Table audit_logs {
+  audit_id uuid [pk]
+
+  user_id uuid
+
+  action varchar
+
+  entity_type varchar
+
+  entity_id uuid
+
+  ip_address varchar
+
+  created_at timestamp
+}
+
+Table conversation_summaries {
+  summary_id uuid [pk]
+
+  conversation_id uuid
+
+  summary text
+
+  key_topics text
+
+  sentiment varchar
+
+  last_message_id uuid
+
+  generated_at timestamp
+}
+
+Table files {
+  file_id uuid [pk]
+
+  student_id uuid
+  conversation_id uuid
+
+  file_name varchar
+  file_type varchar
+
+  file_url text
+
+  uploaded_at timestamp
+}
+
+Table payment_transactions {
+  transaction_id uuid [pk]
+
+  subscription_id uuid
+
+  payment_provider varchar
+
+  amount decimal
+
+  currency varchar
+
+  payment_status varchar
+
+  transaction_reference varchar
+
+  paid_at timestamp
+}
+
+Table ai_prompt_versions {
+  prompt_id uuid [pk]
+
+  prompt_name varchar
+
+  prompt_version varchar
+
+  prompt_content text
+
+  is_active boolean
+
+  created_at timestamp
+}
+
+Table school_settings {
+  setting_id uuid [pk]
+
+  tenant_id uuid
+
+  school_logo text
+
+  primary_color varchar
+
+  wellness_threshold decimal
+
+  allow_parent_notifications boolean
+
+  created_at timestamp
+}
+
+Ref: school_settings.tenant_id > tenants.tenant_id
+
+
+Ref: payment_transactions.subscription_id > subscriptions.subscription_id
+
+Ref: files.student_id > student_profiles.student_id
+Ref: files.conversation_id > conversations.conversation_id
+
+Ref: conversation_summaries.conversation_id > conversations.conversation_id
+
+
+Ref: users.tenant_id > tenants.tenant_id
+
+Ref: classes.tenant_id > tenants.tenant_id
+
+Ref: student_profiles.user_id > users.user_id
+Ref: student_profiles.class_id > classes.class_id
+
+Ref: parent_profiles.user_id > users.user_id
+
+Ref: counselor_profiles.user_id > users.user_id
+
+Ref: school_admin_profiles.user_id > users.user_id
+
+Ref: student_parent_links.student_id > student_profiles.student_id
+Ref: student_parent_links.parent_id > parent_profiles.parent_id
+
+Ref: conversations.student_id > student_profiles.student_id
+
+Ref: messages.conversation_id > conversations.conversation_id
+
+Ref: conversation_tags.conversation_id > conversations.conversation_id
+
+
+
+Ref: memory_items.student_id > student_profiles.student_id
+
+Ref: wellness_records.student_id > student_profiles.student_id
+
+Ref: goals.student_id > student_profiles.student_id
+
+Ref: journal_entries.student_id > student_profiles.student_id
+
+Ref: risk_assessments.student_id > student_profiles.student_id
+
+Ref: parent_insight_history.student_id > student_profiles.student_id
+
+Ref: counselor_sessions.student_id > student_profiles.student_id
+Ref: counselor_sessions.counselor_id > counselor_profiles.counselor_id
+
+Ref: counselor_notes.counselor_session_id > counselor_sessions.counselor_session_id
+Ref: counselor_notes.counselor_id > counselor_profiles.counselor_id
+
+Ref: student_timeline.student_id > student_profiles.student_id
+
+Ref: analytics_snapshots.tenant_id > tenants.tenant_id
+
+Ref: notifications.user_id > users.user_id
+
+Ref: risk_assessments.conversation_id > conversations.conversation_id
+
+Ref: subscriptions.tenant_id > tenants.tenant_id
+Ref: risk_assessments.conversation_id > conversations.conversation_id
+
+Ref: audit_logs.user_id > users.user_id

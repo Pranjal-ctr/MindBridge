@@ -1,0 +1,418 @@
+# MindBridge SaaS Platform — Full Project Report
+
+> **Date**: July 5, 2026  
+> **Platform**: Student Mental Wellness SaaS with AI Companion (Comrade)  
+> **Stack**: FastAPI + PostgreSQL (backend) · React + Vite + TypeScript (frontend)
+
+---
+
+## Executive Summary
+
+MindBridge is a multi-tenant SaaS application designed for student mental wellness. It features an AI companion called **Comrade** (powered by Gemini 2.5 Flash), a parent–student linking system, counselor tools, school admin analytics, and a memory engine that allows the AI to remember student context across conversations.
+
+**4 phases have been implemented. 2 phases remain.**
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    FRONTEND (Vite + React)               │
+│  LandingPage · LoginSignup · StudentDashboard            │
+│  ParentDashboard · CounselorDashboard · SchoolAdmin      │
+│  StudentInviteCode · StudentGrowthProfile · BookCounselor│
+├─────────────────────────────────────────────────────────┤
+│                    BACKEND (FastAPI)                      │
+│  13 Router Modules · JWT Auth · CORS · Alembic Migrations│
+├─────────────────────────────────────────────────────────┤
+│                    AI LAYER                               │
+│  Gemini 2.5 Flash · Prompt Versioning · Safety Logging   │
+│  Memory Extraction · Title Generation · Retry w/ Backoff │
+├─────────────────────────────────────────────────────────┤
+│                    DATABASE (PostgreSQL)                  │
+│  27 Tables · Multi-Tenant · UUID PKs · JSONB metadata    │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Phase 1: Authentication & Core Platform ✅ COMPLETE
+
+### What was built
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| JWT Auth (login/signup/me) | `app/auth/router.py`, `service.py`, `schemas.py`, `utils.py` | ✅ Working |
+| Role-based access (student, parent, counselor, school_admin) | `app/dependencies.py`, `protected-route.tsx` | ✅ Working |
+| Phone number collection on signup (all roles) | `app/auth/schemas.py` → `phone` field | ✅ Working |
+| School Code logic (required for student/parent/school_admin, hidden for counselor) | `LoginSignup.tsx` conditional rendering | ✅ Working |
+| Multi-tenant DB schema (27 tables) | `database/models.py` (799 lines), `database/schema.sql` | ✅ Working |
+| Alembic migration chain | `001_initial_schema.py` → `004_memory_enhancements.py` | ✅ Working |
+| Landing page | `LandingPage.tsx` (19KB, premium design) | ✅ Working |
+| Login/Signup with role tabs | `LoginSignup.tsx` (17KB) | ✅ Working |
+| 4 role-specific dashboards | `StudentDashboard.tsx`, `ParentDashboard.tsx`, `CounselorDashboard.tsx`, `SchoolAdminDashboard.tsx` | ✅ Working |
+
+### API Endpoints (Phase 1)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/auth/signup` | Register with role, phone, optional school code |
+| `POST` | `/auth/login` | JWT token authentication |
+| `GET` | `/auth/me` | Current user profile |
+| `GET` | `/users/profile` | Extended user profile |
+| `PUT` | `/users/profile` | Update profile |
+| `GET` | `/health` | Health check |
+| `GET` | `/health/db` | Database connectivity check |
+
+### Database Tables (27 total)
+
+`tenants` · `users` · `student_profiles` · `parent_profiles` · `counselor_profiles` · `conversations` · `messages` · `conversation_summaries` · `memory_items` · `wellness_records` · `wellness_goals` · `journal_entries` · `risk_assessments` · `risk_alerts` · `counselor_sessions` · `counselor_notes` · `referrals` · `parent_insights` · `anonymized_analytics` · `notifications` · `subscriptions` · `subscription_plans` · `payments` · `ai_prompt_versions` · `safety_audit_logs` · `parent_invite_codes` · `student_parent_links`
+
+---
+
+## Phase 2: Parent Linking System ✅ COMPLETE
+
+### What was built
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| Invite code generation (students) | `app/linking/service.py`, `router.py`, `schemas.py` | ✅ Working |
+| Parent signup with invite code | `app/auth/service.py` invite validation | ✅ Working |
+| Student → Parent link creation | `student_parent_links` table | ✅ Working |
+| Student can view/revoke linked parents | `DELETE /linking/parents/{link_id}` | ✅ Working |
+| Student can regenerate invite code | `POST /linking/invite-code` | ✅ Working |
+| Parent can view linked children | `GET /linking/children` | ✅ Working |
+| Frontend: Student Invite Code page | `StudentInviteCode.tsx` (15KB) | ✅ Working |
+| DB migration for invite codes | `003_parent_invite_codes.py` | ✅ Applied |
+
+### API Endpoints (Phase 2)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/linking/invite-code` | Generate parent invite code |
+| `GET` | `/linking/invite-code` | Get active invite code |
+| `GET` | `/linking/parents` | List linked parents (student view) |
+| `GET` | `/linking/children` | List linked children (parent view) |
+| `DELETE` | `/linking/parents/{link_id}` | Revoke parent access |
+
+### Security
+
+- Invite codes are UUID-based, expire after 48 hours
+- One-time use only
+- Backend validates: code exists → not expired → not used → belongs to correct student
+- Raw student chat messages are **never** exposed to parents
+
+---
+
+## Phase 3: Comrade AI Integration ✅ COMPLETE
+
+### What was built
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| Gemini 2.5 Flash integration | `app/ai/service.py` (523 lines) | ✅ Working |
+| System prompt (Comrade persona) | `app/ai/prompts.py` | ✅ Working |
+| Prompt versioning (DB-first, code-fallback) | `ai_prompt_versions` table + `_load_active_prompt()` | ✅ Working |
+| AI message metadata tracking | `model`, `prompt_version`, `response_time_ms` stored in JSONB | ✅ Working |
+| Safety event logging | `app/ai/safety.py` → `safety_audit_logs` table | ✅ Working |
+| Conversation CRUD | `app/conversations/service.py`, `router.py`, `schemas.py` | ✅ Working |
+| ChatGPT-style message flow | User → Store → Gemini → Store AI → Return both | ✅ Working |
+| Typing indicator | Frontend shows "Comrade is typing..." during API call | ✅ Working |
+| Conversation summary hook | Placeholder for future (triggers at message threshold) | ✅ Placeholder |
+| Retry with exponential backoff | `_call_gemini_with_retry()` handles 429 errors | ✅ Working |
+
+### API Endpoints (Phase 3)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/conversations/` | Create new conversation |
+| `GET` | `/conversations/` | List student conversations (paginated) |
+| `GET` | `/conversations/{id}` | Get conversation with messages |
+| `PUT` | `/conversations/{id}` | Update title |
+| `DELETE` | `/conversations/{id}` | Archive conversation |
+| `POST` | `/conversations/{id}/messages` | Send message → get AI response |
+| `GET` | `/conversations/{id}/messages` | Get messages (cursor pagination) |
+
+### AI Architecture
+
+```
+Student sends message
+  → Store user message in DB
+  → Load active prompt (DB or fallback)
+  → Load student memories (top 5 + pinned)
+  → Inject memories into system prompt
+  → Load conversation history (last 20 msgs)
+  → Build prompt payload
+  → Call Gemini 2.5 Flash (with retry on 429)
+  → Log safety events (self-harm, abuse, violence keywords)
+  → Store AI response + metadata in DB
+  → Trigger conversation summary hook (if threshold met)
+  → Trigger auto-rename (after 4th message)
+  → Trigger memory extraction
+  → Return both messages to frontend
+```
+
+### Safety Logging
+
+Keywords monitored: `self-harm`, `suicide`, `kill myself`, `abuse`, `hurt me`, `violence`, etc.
+
+When detected:
+- Creates entry in `safety_audit_logs` with severity, conversation_id, user_id
+- Does NOT trigger any workflows yet (Phase 5)
+
+---
+
+## Phase 4: Memory Engine ✅ COMPLETE (with known issue)
+
+### What was built
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| Memory extraction via Gemini | `extract_memories()` in `app/ai/service.py` | ✅ Working |
+| Smart filtering (importance ≥ 0.75 or key types) | `ALWAYS_STORE_TYPES`, `IMPORTANCE_THRESHOLD` | ✅ Working |
+| Memory types: goal, academic, emotion, relationship, preference, fact | `app/memory/schemas.py` | ✅ Working |
+| confidence_score on memories | `MemoryItem.confidence_score` column | ✅ Working |
+| Pin/Unpin memories | `PATCH /memory/{id}/pin` | ✅ Working |
+| Pinned memories always injected | `load_student_memories()` loads all pinned + top 5 | ✅ Working |
+| Memory injection into AI prompts | System prompt augmented with `STUDENT CONTEXT` block | ✅ Working |
+| Growth Profile page | `StudentGrowthProfile.tsx` (9KB) | ✅ Working |
+| Memory CRUD (view, delete, pin) | `app/memory/router.py`, `service.py` | ✅ Working |
+| Conversation auto-rename | `generate_conversation_title()` in `app/ai/service.py` | ⚠️ Code complete, rate-limited |
+| DB migration for memory enhancements | `004_memory_enhancements.py` | ✅ Applied |
+| Duplicate memory detection | Exact content match before insert | ✅ Working |
+
+### API Endpoints (Phase 4)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/memory/` | Create memory item |
+| `GET` | `/memory/` | List memories (optional type filter) |
+| `PATCH` | `/memory/{id}/pin` | Pin/unpin a memory |
+| `DELETE` | `/memory/{id}` | Delete a memory |
+
+### Memory Extraction Logic
+
+```python
+# Only extract if:
+#   1. memory_type in [goal, academic, emotion, relationship]  (ALWAYS store)
+#   2. OR importance >= 0.75
+
+# Extraction prompt asks Gemini to return JSON:
+[
+  {
+    "type": "goal",
+    "content": "Wants to become a software engineer",
+    "importance": 0.92,
+    "confidence": 0.95
+  }
+]
+```
+
+### Growth Profile Page
+
+- Gradient header with stats (total memories, pinned count, categories)
+- Memories grouped by type with unique color/icon per category
+- Pin/Unpin buttons (pinned memories always injected into AI context)
+- Delete button with instant state update
+- Empty state encouraging conversation
+- Accessible from sidebar: "Growth Profile" link
+
+### ⚠️ Known Issue: Auto-Rename
+
+The conversation auto-rename feature (changes "New Conversation" to a descriptive title after 2 exchanges) is **code-complete** but frequently fails due to **Gemini free tier rate limits** (20 requests/day). Each message exchange makes up to 3 Gemini calls (response + title gen + memory extraction), exhausting the quota quickly.
+
+**Fix**: Upgrade to Gemini paid tier, or reduce concurrent Gemini calls by deferring title generation and memory extraction to a background task.
+
+---
+
+## Frontend Routes
+
+| Route | Component | Access |
+|-------|-----------|--------|
+| `/` | `LandingPage` | Public |
+| `/login` | `LoginSignup` | Public |
+| `/student` | `StudentDashboard` | Student only |
+| `/student/family` | `StudentInviteCode` | Student only |
+| `/student/growth` | `StudentGrowthProfile` | Student only |
+| `/parent` | `ParentDashboard` | Parent only |
+| `/counselor` | `CounselorDashboard` | Counselor only |
+| `/school` | `SchoolAdminDashboard` | School Admin only |
+| `/book-counselor` | `BookCounselor` | Student only |
+
+---
+
+## Backend Modules (13 registered routers)
+
+| Module | Prefix | Description | Implementation |
+|--------|--------|-------------|----------------|
+| `auth` | `/auth` | JWT login/signup/me | ✅ Full |
+| `users` | `/users` | Profile management | ✅ Full |
+| `conversations` | `/conversations` | Chat + AI responses | ✅ Full |
+| `memory` | `/memory` | Student memory CRUD | ✅ Full |
+| `linking` | `/linking` | Parent-student linking | ✅ Full |
+| `wellness` | `/wellness` | Wellness records/goals/journal | 🔲 Scaffolded |
+| `risk` | `/risk` | Risk assessment engine | 🔲 Scaffolded |
+| `parents` | `/parents` | Parent insights | 🔲 Scaffolded |
+| `counselors` | `/counselors` | Counselor sessions/notes | 🔲 Scaffolded |
+| `analytics` | `/analytics` | School-wide analytics | 🔲 Scaffolded |
+| `notifications` | `/notifications` | Push notifications | 🔲 Scaffolded |
+| `subscriptions` | `/subscriptions` | Payment/billing | 🔲 Scaffolded |
+| `admin` | `/admin` | Platform admin | 🔲 Scaffolded |
+
+---
+
+## Database Migration Chain
+
+| Migration | Description | Status |
+|-----------|-------------|--------|
+| `001_initial_schema` | 27 tables, indexes, constraints | ✅ Applied |
+| `002_schema_improvements` | Additional indexes, refinements | ✅ Applied |
+| `003_parent_invite_codes` | `parent_invite_codes` + `student_parent_links` tables | ✅ Applied |
+| `004_memory_enhancements` | `confidence_score`, `is_pinned`, `source_conversation_id` on `memory_items` | ✅ Applied |
+
+---
+
+## Environment Variables
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | ✅ |
+| `JWT_SECRET_KEY` | JWT signing key | ✅ |
+| `GEMINI_API_KEY` | Google Gemini API key | ✅ |
+| `CORS_ORIGINS` | Allowed frontend origins | ✅ |
+| `GEMINI_MODEL` | Model name (default: `gemini-2.5-flash`) | Optional |
+| `AI_MAX_CONTEXT_MESSAGES` | Max messages in prompt (default: 20) | Optional |
+| `AI_SUMMARY_THRESHOLD` | Message count for summary trigger (default: 20) | Optional |
+
+---
+
+## What's Left To Build
+
+### Phase 5: Weekly Reflection & Risk Detection 🔲 NOT STARTED
+
+| Feature | Description |
+|---------|-------------|
+| Weekly Reflection | Prompted weekly check-in with mood tracking |
+| Conversation Summaries | Auto-generate summaries after 20+ messages |
+| Risk Detection | AI-powered severity assessment (low/medium/high/critical) |
+| Counselor Escalation | Auto-create risk alerts when critical keywords detected |
+| Counselor Dashboard (functional) | View assigned students, risk alerts, session notes |
+
+### Phase 6: Parent Insights & Analytics 🔲 NOT STARTED
+
+| Feature | Description |
+|---------|-------------|
+| Parent Insight AI | Weekly AI-generated wellness summaries for parents (no raw messages) |
+| Parent Dashboard (functional) | View child wellness trends, recommendations |
+| School Analytics (functional) | Anonymized school-wide mental health trends |
+| Notification System | Push notifications for risk alerts, insights |
+| Subscription & Billing | Payment integration for school subscriptions |
+
+### Additional Items
+
+| Item | Priority |
+|------|----------|
+| Upgrade Gemini to paid tier (fixes rate limiting) | High |
+| Move title gen + memory extraction to background tasks | Medium |
+| Add memory pinning UI polish (confirm dialog on delete) | Low |
+| Add conversation search | Medium |
+| Add message reactions/bookmarks | Low |
+| Production deployment (Docker, CI/CD) | High |
+| Unit tests | Medium |
+| API rate limiting middleware | Medium |
+
+---
+
+## File Inventory
+
+### Backend (Python/FastAPI)
+
+```
+backend/
+├── main.py                          # FastAPI app, 13 routers, health checks
+├── alembic.ini                      # Migration config
+├── requirements.txt                 # Dependencies
+├── .env                             # Environment variables
+├── database/
+│   ├── models.py                    # 27 SQLAlchemy models (799 lines)
+│   ├── schema.sql                   # Raw SQL schema
+│   └── session.py                   # Async session factory
+├── migrations/versions/
+│   ├── 001_initial_schema.py        # Core 27-table schema
+│   ├── 002_schema_improvements.py   # Index refinements
+│   ├── 003_parent_invite_codes.py   # Invite code tables
+│   └── 004_memory_enhancements.py   # Memory fields
+├── app/
+│   ├── config.py                    # Settings (Pydantic)
+│   ├── dependencies.py              # JWT deps, role checking
+│   ├── auth/                        # Login, signup, JWT
+│   ├── users/                       # Profile CRUD
+│   ├── conversations/               # Chat + AI response flow
+│   ├── memory/                      # Memory CRUD + pin
+│   ├── linking/                     # Parent-student linking
+│   ├── ai/
+│   │   ├── service.py               # Gemini integration (523 lines)
+│   │   ├── prompts.py               # Comrade persona prompt
+│   │   └── safety.py                # Keyword-based safety logging
+│   ├── wellness/                    # Scaffolded
+│   ├── risk/                        # Scaffolded
+│   ├── parents/                     # Scaffolded
+│   ├── counselors/                  # Scaffolded
+│   ├── analytics/                   # Scaffolded
+│   ├── notifications/               # Scaffolded
+│   ├── subscriptions/               # Scaffolded
+│   └── admin/                       # Scaffolded
+```
+
+### Frontend (React/TypeScript/Vite)
+
+```
+src/
+├── app/
+│   ├── App.tsx                      # Router (9 routes)
+│   └── components/
+│       ├── LandingPage.tsx          # Public landing (19KB)
+│       ├── LoginSignup.tsx          # Auth with role tabs (17KB)
+│       ├── StudentDashboard.tsx     # Chat UI (17KB)
+│       ├── StudentInviteCode.tsx    # Family linking (15KB)
+│       ├── StudentGrowthProfile.tsx # Memory viewer (9KB)
+│       ├── ParentDashboard.tsx      # Parent view (25KB)
+│       ├── CounselorDashboard.tsx   # Counselor view (13KB)
+│       ├── SchoolAdminDashboard.tsx # Admin view (16KB)
+│       └── BookCounselor.tsx        # Booking UI (14KB)
+├── hooks/
+│   ├── useConversations.ts          # Chat state management
+│   └── useMemory.ts                 # Memory state management
+├── lib/
+│   ├── api.ts                       # Axios instance + interceptors
+│   ├── auth-context.tsx             # Auth provider + JWT storage
+│   ├── protected-route.tsx          # Role-based route guard
+│   └── types.ts                     # TypeScript interfaces
+```
+
+---
+
+## Verified Test Results
+
+| Test | Result |
+|------|--------|
+| User signup (all 4 roles) | ✅ Passed |
+| Login + JWT token | ✅ Passed |
+| Role-based route protection | ✅ Passed |
+| Create conversation | ✅ Passed |
+| Send message → AI response | ✅ Passed |
+| AI message metadata stored | ✅ Passed |
+| Safety event logging | ✅ Passed |
+| Parent invite code generation | ✅ Passed |
+| Parent-student linking | ✅ Passed |
+| Memory extraction from conversation | ✅ Passed |
+| Memory pinning/unpinning | ✅ Passed |
+| Growth Profile page rendering | ✅ Passed |
+| Memory injection into AI context | ✅ Passed |
+| Conversation auto-rename | ⚠️ Code complete, blocked by API rate limits |
+| Retry on 429 errors | ✅ Working |
+
+---
+
+> **Summary**: Phases 1–4 are production-ready (pending the Gemini rate limit upgrade). The core student experience — authentication, AI chat, memory persistence, parent linking, and growth tracking — is fully functional. Phases 5–6 (risk detection, counselor workflows, parent insights, analytics, billing) remain to be built.
