@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 # -------------------------------------------------------------------
@@ -49,6 +49,35 @@ class TenantResponse(BaseModel):
 class TenantListResponse(BaseModel):
     tenants: list[TenantResponse]
     total: int
+
+
+# -------------------------------------------------------------------
+# Staff Users (counselor / school_admin provisioning)
+# -------------------------------------------------------------------
+
+class StaffUserCreate(BaseModel):
+    """Platform admin creates a counselor or school_admin account for a tenant.
+    Staff roles cannot self-register via /auth/signup."""
+    tenant_id: uuid.UUID
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    role: str = Field(..., pattern=r"^(counselor|school_admin)$")
+    phone: str | None = Field(None, max_length=20)
+
+
+class StaffUserResponse(BaseModel):
+    """Created staff user."""
+    user_id: uuid.UUID
+    tenant_id: uuid.UUID
+    email: str
+    role: str
+    first_name: str
+    last_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # -------------------------------------------------------------------

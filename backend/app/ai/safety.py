@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import AuditLog
 
@@ -74,7 +71,6 @@ def detect_safety_events(message_text: str) -> list[str]:
 
 
 async def log_safety_events(
-    db: AsyncSession,
     conversation_id: uuid.UUID,
     student_user_id: uuid.UUID,
     message_text: str,
@@ -82,25 +78,30 @@ async def log_safety_events(
     """
     Detect and log safety events from a message.
 
-    Creates audit log entries for each detected event type.
+    Creates audit log entries for each detected event type, in a dedicated
+    session committed immediately -- a self-harm/abuse signal must be
+    persisted even if the surrounding chat request later fails and rolls back.
+
     Does NOT trigger any workflows -- just data for future risk detection.
 
     Returns:
         List of event types that were logged.
     """
+    from database.session import async_session_factory
+
     events = detect_safety_events(message_text)
+    if not events:
+        return []
 
-    for event_type in events:
-        log_entry = AuditLog(
-            audit_id=uuid.uuid4(),
-            user_id=student_user_id,
-            action=f"safety_event:{event_type}",
-            entity_type="conversation",
-            entity_id=conversation_id,
-        )
-        db.add(log_entry)
-
-    if events:
-        await db.flush()
+    async with async_session_factory() as db:
+        for event_type in events:
+            db.add(AuditLog(
+                audit_id=uuid.uuid4(),
+                user_id=student_user_id,
+                action=f"safety_event:{event_type}",
+                entity_type="conversation",
+                entity_id=conversation_id,
+            ))
+        await db.commit()
 
     return events

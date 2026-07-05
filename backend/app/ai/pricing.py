@@ -11,8 +11,9 @@ from decimal import Decimal
 
 # (provider, model) -> (cost per 1K input tokens, cost per 1K output tokens), in USD.
 _PRICING: dict[tuple[str, str], tuple[Decimal, Decimal]] = {
-    ("gemini", "gemini-2.5-flash"): (Decimal("0.000075"), Decimal("0.0003")),
-    ("gemini", "gemini-2.5-pro"): (Decimal("0.00125"), Decimal("0.005")),
+    ("gemini", "gemini-2.5-flash"): (Decimal("0.0003"), Decimal("0.0025")),
+    ("gemini", "gemini-2.5-flash-lite"): (Decimal("0.0001"), Decimal("0.0004")),
+    ("gemini", "gemini-2.5-pro"): (Decimal("0.00125"), Decimal("0.01")),
 }
 
 

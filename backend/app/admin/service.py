@@ -14,11 +14,13 @@ from app.admin.schemas import (
     AuditLogResponse,
     PromptCreate,
     PromptResponse,
+    StaffUserCreate,
+    StaffUserResponse,
     TenantCreate,
     TenantResponse,
     TenantUpdate,
 )
-from database.models import AIPromptVersion, AuditLog, Tenant
+from database.models import AIPromptVersion, AuditLog, Tenant, User
 
 
 # -------------------------------------------------------------------
@@ -78,6 +80,47 @@ async def update_tenant(
     await db.flush()
     await db.refresh(tenant)
     return TenantResponse.model_validate(tenant)
+
+
+# -------------------------------------------------------------------
+# Staff Users
+# -------------------------------------------------------------------
+
+async def create_staff_user(db: AsyncSession, payload: StaffUserCreate) -> StaffUserResponse:
+    """Create a counselor or school_admin account. Platform admin only."""
+    from app.auth.service import _create_role_profile
+    from app.auth.utils import hash_password
+
+    tenant_result = await db.execute(
+        select(Tenant).where(Tenant.tenant_id == payload.tenant_id)
+    )
+    if not tenant_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    email = payload.email.lower()
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
+        )
+
+    user = User(
+        user_id=uuid.uuid4(),
+        tenant_id=payload.tenant_id,
+        email=email,
+        password_hash=hash_password(payload.password),
+        role=payload.role,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        phone=payload.phone,
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+    await _create_role_profile(db, user)
+
+    return StaffUserResponse.model_validate(user)
 
 
 # -------------------------------------------------------------------

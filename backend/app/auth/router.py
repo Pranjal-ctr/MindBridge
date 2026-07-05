@@ -18,14 +18,25 @@ from app.auth.schemas import (
     TokenResponse,
     UserResponse,
 )
-from app.auth.service import authenticate_user, refresh_access_token, register_user
+from app.auth.service import (
+    authenticate_user,
+    refresh_access_token,
+    register_user,
+    verify_email,
+)
 from app.dependencies import CurrentUser
+from app.rate_limit import rate_limit
 from database.session import get_db
 
 router = APIRouter()
 
 
-@router.post("/signup", response_model=AuthResponse, status_code=201)
+@router.post(
+    "/signup",
+    response_model=AuthResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limit("signup", 10))],
+)
 async def signup(
     payload: SignupRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -44,7 +55,11 @@ async def signup(
     )
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post(
+    "/login",
+    response_model=AuthResponse,
+    dependencies=[Depends(rate_limit("login", 10))],
+)
 async def login(
     payload: LoginRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -70,6 +85,16 @@ async def refresh_token(
     Refresh an expired access token using a valid refresh token.
     """
     return await refresh_access_token(db, payload.refresh_token)
+
+
+@router.post("/verify")
+async def verify_email_endpoint(
+    token: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Verify a user's email address from a verification token."""
+    await verify_email(db, token)
+    return {"status": "verified"}
 
 
 @router.get("/me", response_model=UserResponse)

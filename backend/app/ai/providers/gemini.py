@@ -35,7 +35,7 @@ class GeminiProvider(AIProvider):
         max_output_tokens: int,
     ) -> ProviderResponse:
         client = _get_client()
-        response = client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model=model,
             contents=contents,
             config=genai.types.GenerateContentConfig(

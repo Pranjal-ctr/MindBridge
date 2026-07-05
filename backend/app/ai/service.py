@@ -443,8 +443,8 @@ async def generate_comrade_response(
         prompt_version = f"{prompt_version}-error"
         call_metadata = {"response_time_ms": int((time.monotonic() - start_time) * 1000)}
 
-    # 6. Log safety events (on the student's message, not the AI response)
-    await log_safety_events(db, conversation_id, student_user_id, student_message)
+    # 6. Log safety events (own session -- must survive request rollback)
+    await log_safety_events(conversation_id, student_user_id, student_message)
 
     # 7. Build metadata
     metadata = {

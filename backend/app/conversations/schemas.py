@@ -58,10 +58,9 @@ class ConversationListResponse(BaseModel):
 # -------------------------------------------------------------------
 
 class MessageCreate(BaseModel):
-    """Send a new message in a conversation."""
-    message_text: str = Field(..., min_length=1)
-    sender_type: str = Field(default="user", pattern=r"^(user|ai|system)$")
-    metadata: dict | None = Field(default=None, description="Arbitrary key-value data (e.g. model, token counts)")
+    """Send a new message in a conversation.
+    sender_type and metadata are server-controlled -- clients cannot forge AI/system messages."""
+    message_text: str = Field(..., min_length=1, max_length=4000)
 
 
 class MessageResponse(BaseModel):

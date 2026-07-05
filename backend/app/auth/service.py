@@ -5,11 +5,15 @@ Business logic for registration, login, and token management.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import SignupRequest, TokenResponse
@@ -54,8 +58,9 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
     # 2. Resolve tenant (counselors get default tenant if no school_code)
     tenant = await _resolve_tenant(db, payload.school_code)
 
-    # 3. Check duplicate email
-    existing = await db.execute(select(User).where(User.email == payload.email))
+    # 3. Check duplicate email (normalized to lowercase)
+    email = payload.email.lower()
+    existing = await db.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -66,7 +71,7 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
     user = User(
         user_id=uuid.uuid4(),
         tenant_id=tenant.tenant_id,
-        email=payload.email,
+        email=email,
         password_hash=hash_password(payload.password),
         role=payload.role,
         first_name=payload.first_name,
@@ -84,10 +89,48 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
     if payload.role == "parent" and payload.invite_code:
         await _auto_redeem_invite(db, user, payload.invite_code)
 
-    # 7. Generate tokens
+    # 7. Issue email-verification token (link logged until SMTP is wired up)
+    _issue_verification_link(user)
+
+    # 8. Generate tokens
     tokens = _generate_tokens(user)
 
     return user, tokens
+
+
+def _issue_verification_link(user: User) -> None:
+    """Create a 24h verification token and log the link (SMTP delivery is a follow-up)."""
+    from datetime import timedelta
+
+    token = create_access_token(
+        {"sub": str(user.user_id), "purpose": "email_verify"},
+        expires_delta=timedelta(hours=24),
+    )
+    logger.info("Email verification link for %s: /auth/verify?token=%s", user.email, token)
+
+
+async def verify_email(db: AsyncSession, token: str) -> None:
+    """Mark a user's email as verified from a verification token."""
+    from jose import JWTError
+
+    try:
+        payload = decode_token(token)
+        if payload.get("purpose") != "email_verify":
+            raise ValueError("wrong purpose")
+        user_id = uuid.UUID(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification link",
+        )
+
+    result = await db.execute(select(User).where(User.user_id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.is_verified = True
+    await db.flush()
 
 
 async def _auto_redeem_invite(db: AsyncSession, user: User, invite_code: str) -> None:
@@ -117,7 +160,7 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> tupl
     Raises:
         HTTPException 401 if credentials are invalid.
     """
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(User.email == email.lower()))
     user = result.scalar_one_or_none()
 
     if user is None or not verify_password(password, user.password_hash):
@@ -205,7 +248,15 @@ async def _resolve_tenant(db: AsyncSession, school_code: str | None) -> Tenant:
             status="active",
         )
         db.add(tenant)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError:
+            # Concurrent signup created it first (school_code is unique) -- re-select
+            await db.rollback()
+            result = await db.execute(
+                select(Tenant).where(Tenant.school_code == "DEFAULT")
+            )
+            tenant = result.scalar_one()
 
     return tenant
 

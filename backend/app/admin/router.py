@@ -16,6 +16,8 @@ from app.admin.schemas import (
     PromptCreate,
     PromptListResponse,
     PromptResponse,
+    StaffUserCreate,
+    StaffUserResponse,
     TenantCreate,
     TenantListResponse,
     TenantResponse,
@@ -23,6 +25,7 @@ from app.admin.schemas import (
 )
 from app.admin.service import (
     create_prompt,
+    create_staff_user,
     create_tenant,
     list_audit_logs,
     list_prompts,
@@ -75,6 +78,25 @@ async def update_tenant_endpoint(
 ):
     """Update a tenant. Platform admin only."""
     return await update_tenant(db, tenant_id, payload)
+
+
+# -------------------------------------------------------------------
+# Staff Users
+# -------------------------------------------------------------------
+
+@router.post(
+    "/users",
+    response_model=StaffUserResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_staff_account(
+    payload: StaffUserCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create a counselor or school_admin account for a tenant. Platform admin only.
+    Staff roles cannot self-register via /auth/signup."""
+    return await create_staff_user(db, payload)
 
 
 # -------------------------------------------------------------------

@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.schemas import (
@@ -29,11 +29,13 @@ from app.conversations.service import (
     get_messages,
     get_student_id_for_user,
     list_conversations,
+    run_post_response_hooks,
     send_message,
     send_ai_response,
     update_conversation,
 )
 from app.dependencies import CurrentUser, require_role
+from app.rate_limit import rate_limit
 from database.session import get_db
 
 router = APIRouter()
@@ -113,29 +115,44 @@ async def delete_conversation_endpoint(
 # Messages
 # -------------------------------------------------------------------
 
-@router.post("/{conversation_id}/messages", response_model=SendMessageResponse, status_code=201)
+@router.post(
+    "/{conversation_id}/messages",
+    response_model=SendMessageResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limit("chat", 20))],
+)
 async def send_new_message(
     conversation_id: uuid.UUID,
     payload: MessageCreate,
     current_user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ):
     """
     Send a message in a conversation.
 
     Flow:
     1. Store the user's message
-    2. Call Comrade AI (Gemini 2.5 Flash)
-    3. Store the AI response with metadata
-    4. Return both messages
+    2. Call Comrade AI and store the response with metadata
+    3. Return both messages (title generation + memory extraction
+       run afterwards as background tasks)
     """
     student_id = await get_student_id_for_user(db, current_user.user_id)
 
     # 1. Store user message
     user_msg = await send_message(db, conversation_id, student_id, current_user.user_id, payload)
 
-    # 2+3. Generate and store AI response
+    # 2. Generate and store AI response
     ai_msg = await send_ai_response(db, conversation_id, student_id, current_user.user_id, payload.message_text)
+
+    # 3. Auxiliary AI work runs after the response is sent
+    background_tasks.add_task(
+        run_post_response_hooks,
+        conversation_id,
+        student_id,
+        payload.message_text,
+        ai_msg.message_text,
+    )
 
     return SendMessageResponse(user_message=user_msg, ai_message=ai_msg)
 

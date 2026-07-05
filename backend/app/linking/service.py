@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.linking.schemas import (
@@ -170,11 +171,12 @@ async def redeem_invite_code(
     """
     parent = await _get_parent_profile(db, user_id)
 
-    # 1. Find the invite code
+    # 1. Find the invite code (row-locked: two parents redeeming concurrently
+    # must serialize so only one passes the is_used check)
     result = await db.execute(
-        select(ParentInviteCode).where(
-            ParentInviteCode.code == invite_code.upper().strip()
-        )
+        select(ParentInviteCode)
+        .where(ParentInviteCode.code == invite_code.upper().strip())
+        .with_for_update()
     )
     invite = result.scalar_one_or_none()
 
@@ -243,7 +245,14 @@ async def redeem_invite_code(
     invite.is_used = True
     invite.used_by = parent.parent_id
 
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Unique (student_id, parent_id) violated by a concurrent redemption
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You are already linked to this student",
+        )
 
     return RedeemInviteResponse(
         link_id=link.link_id,

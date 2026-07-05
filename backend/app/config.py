@@ -5,7 +5,10 @@ Centralized settings via pydantic-settings with .env support.
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEV_JWT_SECRET = "mindbridge-dev-secret-key-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -38,7 +41,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------
     # JWT Authentication
     # -------------------------------------------------------------------
-    JWT_SECRET_KEY: str = "mindbridge-dev-secret-key-change-in-production"
+    JWT_SECRET_KEY: str = _DEV_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -65,12 +68,22 @@ class Settings(BaseSettings):
     AI_MAX_CONTEXT_MESSAGES: int = 20
     AI_SUMMARY_THRESHOLD: int = 20  # Hook trigger threshold
     AI_DEFAULT_MAX_RETRIES: int = 2  # Used when a feature has no DB route configured yet
+    AI_DAILY_MESSAGE_LIMIT: int = 100  # Max chat AI calls per student per day (spend cap)
 
     # -------------------------------------------------------------------
     # Pagination
     # -------------------------------------------------------------------
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
+
+    @model_validator(mode="after")
+    def _forbid_dev_secret_in_production(self) -> "Settings":
+        if self.ENVIRONMENT.lower() == "production" and self.JWT_SECRET_KEY == _DEV_JWT_SECRET:
+            raise ValueError(
+                "JWT_SECRET_KEY must be set to a strong secret in production. "
+                "Refusing to start with the development default."
+            )
+        return self
 
 
 @lru_cache()

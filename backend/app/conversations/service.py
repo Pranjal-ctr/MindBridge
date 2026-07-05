@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -146,16 +146,22 @@ async def send_message(
     message = Message(
         message_id=uuid.uuid4(),
         conversation_id=conversation_id,
-        sender_type=payload.sender_type,
-        sender_id=user_id if payload.sender_type == "user" else None,
+        sender_type="user",
+        sender_id=user_id,
         message_text=payload.message_text,
-        metadata_=payload.metadata,
+        metadata_=None,
     )
     db.add(message)
 
-    # Update conversation metadata
-    conversation.total_messages += 1
-    conversation.updated_at = datetime.now(timezone.utc)
+    # Update conversation metadata (atomic increment -- concurrent sends must not lose updates)
+    await db.execute(
+        update(Conversation)
+        .where(Conversation.conversation_id == conversation_id)
+        .values(
+            total_messages=Conversation.total_messages + 1,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
 
     await db.flush()
     await db.refresh(message)
@@ -236,21 +242,34 @@ async def send_ai_response(
     """
     Generate and store a Comrade AI response.
 
-    Called after the user's message is stored.
-    Also triggers:
-    - Auto-rename after first exchange (total_messages == 3)
-    - Memory extraction (filtered by importance threshold)
+    Called after the user's message is stored. Title generation and memory
+    extraction run afterwards as background tasks (run_post_response_hooks)
+    so the student gets their reply without waiting on auxiliary AI calls.
     """
-    from app.ai.service import (
-        extract_memories,
-        generate_comrade_response,
-        generate_conversation_title,
-    )
+    from app.ai.service import generate_comrade_response
+    from app.config import settings
+    from database.models import AIUsageLog
 
     # Verify conversation ownership
     conversation = await get_conversation(db, conversation_id, student_id)
 
-    # Generate AI response via Gemini (now with memory injection)
+    # Daily spend cap: count today's chat AI calls for this student
+    usage_result = await db.execute(
+        select(func.count())
+        .select_from(AIUsageLog)
+        .where(
+            AIUsageLog.student_id == student_id,
+            AIUsageLog.feature_name == "comrade_chat",
+            AIUsageLog.created_at >= func.date_trunc("day", func.now()),
+        )
+    )
+    if (usage_result.scalar() or 0) >= settings.AI_DAILY_MESSAGE_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily message limit reached. Comrade will be ready to chat again tomorrow.",
+        )
+
+    # Generate AI response (provider routing, retry, and fallback in AIRouter)
     response_text, metadata = await generate_comrade_response(
         db, conversation_id, student_id, user_id, student_message_text
     )
@@ -266,36 +285,61 @@ async def send_ai_response(
     )
     db.add(ai_message)
 
-    # Update conversation metadata
-    conversation.total_messages += 1
-    conversation.updated_at = datetime.now(timezone.utc)
+    # Update conversation metadata (atomic increment -- see send_message)
+    await db.execute(
+        update(Conversation)
+        .where(Conversation.conversation_id == conversation_id)
+        .values(
+            total_messages=Conversation.total_messages + 1,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
 
     await db.flush()
     await db.refresh(ai_message)
 
-    # --- Post-response hooks (non-blocking within the same transaction) ---
-
-    # Auto-rename: after second AI response (total_messages >= 4)
-    logger.info(
-        "Post-response hook: conv=%s total_messages=%d ai_generated_title=%s",
-        conversation_id, conversation.total_messages, conversation.ai_generated_title,
-    )
-    if conversation.total_messages >= 4 and not conversation.ai_generated_title:
-        logger.info("Triggering title generation for conversation %s", conversation_id)
-        title = await generate_conversation_title(db, conversation_id)
-        if title:
-            conversation.title = title
-            conversation.ai_generated_title = True
-            await db.flush()
-            logger.info("Conversation %s renamed to: %s", conversation_id, title)
-        else:
-            logger.warning("Title generation returned None for conversation %s", conversation_id)
-
-    # Memory extraction: runs after every AI response
-    # The extraction itself filters for quality (importance >= 0.75 or key types)
-    await extract_memories(
-        db, student_id, conversation_id,
-        student_message_text, response_text,
-    )
-
     return MessageResponse.model_validate(ai_message)
+
+
+async def run_post_response_hooks(
+    conversation_id: uuid.UUID,
+    student_id: uuid.UUID,
+    student_message_text: str,
+    ai_response_text: str,
+) -> None:
+    """
+    Background task: auto-title + memory extraction after a chat exchange.
+
+    Runs after the HTTP response is sent, in its own DB session -- these
+    auxiliary AI calls must not add latency to the chat request or hold
+    its transaction open.
+    """
+    from app.ai.service import extract_memories, generate_conversation_title
+    from database.session import async_session_factory
+
+    try:
+        async with async_session_factory() as db:
+            conv_result = await db.execute(
+                select(Conversation).where(Conversation.conversation_id == conversation_id)
+            )
+            conversation = conv_result.scalar_one_or_none()
+            if conversation is None:
+                return
+
+            # Auto-rename: after second AI response (total_messages >= 4)
+            if conversation.total_messages >= 4 and not conversation.ai_generated_title:
+                title = await generate_conversation_title(db, conversation_id)
+                if title:
+                    conversation.title = title
+                    conversation.ai_generated_title = True
+                    logger.info("Conversation %s renamed to: %s", conversation_id, title)
+
+            # Memory extraction: the extraction itself filters for quality
+            await extract_memories(
+                db, student_id, conversation_id,
+                student_message_text, ai_response_text,
+            )
+
+            await db.commit()
+    except Exception as e:
+        logger.warning("Post-response hooks failed (non-fatal): %s", str(e))

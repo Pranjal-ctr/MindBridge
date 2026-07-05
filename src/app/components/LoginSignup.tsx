@@ -79,9 +79,26 @@ export function LoginSignup() {
   };
 
   const toggleMode = () => {
-    setIsSignup(!isSignup);
+    const next = !isSignup;
+    setIsSignup(next);
     setError(null);
+    // Staff roles cannot self-register — reset selection when switching to signup
+    if (next && (userType === 'counselor' || userType === 'school_admin')) {
+      setUserType('student');
+    }
   };
+
+  // Self-signup is limited to student/parent; staff accounts are provisioned by MindBridge
+  const roleOptions = [
+    { type: 'student' as const, icon: User, label: 'Student' },
+    { type: 'parent' as const, icon: User, label: 'Parent' },
+    ...(!isSignup
+      ? [
+          { type: 'counselor' as const, icon: User, label: 'Counselor' },
+          { type: 'school_admin' as const, icon: School, label: 'School Admin' },
+        ]
+      : []),
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50 flex items-center justify-center p-4">
@@ -122,12 +139,7 @@ export function LoginSignup() {
             <div className="mb-6">
               <label className="text-sm font-medium text-foreground mb-3 block">I am a...</label>
               <div className="grid grid-cols-2 gap-3">
-                {[
-                  { type: 'student' as const, icon: User, label: 'Student' },
-                  { type: 'parent' as const, icon: User, label: 'Parent' },
-                  { type: 'counselor' as const, icon: User, label: 'Counselor' },
-                  { type: 'school_admin' as const, icon: School, label: 'School Admin' }
-                ].map((option) => (
+                {roleOptions.map((option) => (
                   <button
                     key={option.type}
                     type="button"
@@ -143,6 +155,11 @@ export function LoginSignup() {
                   </button>
                 ))}
               </div>
+              {isSignup && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Counselor and School Admin accounts are set up by your school — contact your administrator.
+                </p>
+              )}
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">

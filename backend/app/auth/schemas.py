@@ -19,7 +19,11 @@ class SignupRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
-    role: str = Field(..., pattern=r"^(student|parent|counselor|school_admin)$")
+    role: str = Field(
+        ...,
+        pattern=r"^(student|parent)$",
+        description="Self-signup is limited to student/parent. Staff accounts are provisioned by a platform admin.",
+    )
     phone: str = Field(..., min_length=5, max_length=20, description="Contact number (required)")
     school_code: str | None = Field(None, max_length=50, description="Required for student, parent, school_admin")
     invite_code: str | None = Field(None, max_length=10, description="Parent invite code from student (parent signup only)")
