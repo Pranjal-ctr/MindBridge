@@ -249,11 +249,20 @@ class CounselorProfile(Base, TimestampMixin):
     license_number: Mapped[Optional[str]] = mapped_column(String(100))
     rating: Mapped[Optional[Decimal]] = mapped_column(Numeric(3, 2))
     bio: Mapped[Optional[str]] = mapped_column(Text)
+    # Platform-wide counselor directory fields (Phase 5)
+    qualification: Mapped[Optional[str]] = mapped_column(String(200))
+    specializations: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+    languages: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_available: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     # Relationships
     user: Mapped[User] = relationship(back_populates="counselor_profile")
     sessions: Mapped[list[CounselorSession]] = relationship(back_populates="counselor")
     notes: Mapped[list[CounselorNote]] = relationship(back_populates="counselor")
+    availability: Mapped[list[CounselorAvailability]] = relationship(
+        back_populates="counselor", cascade="all, delete-orphan"
+    )
 
 
 class SchoolAdminProfile(Base, TimestampMixin):
@@ -686,6 +695,27 @@ class CounselorNote(Base, TimestampMixin):
     # Relationships
     session: Mapped[CounselorSession] = relationship(back_populates="notes")
     counselor: Mapped[CounselorProfile] = relationship(back_populates="notes")
+
+
+class CounselorAvailability(Base, TimestampMixin):
+    """A bookable time slot offered by a counselor (platform-wide booking)."""
+    __tablename__ = "counselor_availability"
+    __table_args__ = (
+        Index("ix_availability_counselor_start", "counselor_id", "start_at"),
+    )
+
+    slot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    counselor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("counselor_profiles.counselor_id", ondelete="CASCADE")
+    )
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_booked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    # Relationships
+    counselor: Mapped[CounselorProfile] = relationship(back_populates="availability")
 
 
 # ===================================================================

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Brain, Calendar, Users, FileText, AlertTriangle, TrendingUp, Clock, Menu, X } from 'lucide-react';
 import { useState } from 'react';
+import { CounselorAvailability } from './CounselorAvailability';
 
 export function CounselorDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -129,6 +130,9 @@ export function CounselorDashboard() {
               <div className="text-2xl font-bold text-destructive">1</div>
             </div>
           </div>
+
+          {/* Availability (live) */}
+          <CounselorAvailability />
 
           {/* Upcoming Sessions */}
           <div className="bg-card border border-border rounded-xl p-6 shadow-sm">

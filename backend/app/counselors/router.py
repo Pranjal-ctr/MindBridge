@@ -10,8 +10,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.conversations.service import get_student_id_for_user
 from app.dependencies import CurrentTenant, CurrentUser, require_role
 from app.counselors.schemas import (
+    AvailabilityCreate,
+    AvailabilitySlot,
+    BookRequest,
+    BookResponse,
+    CounselorDirectoryResponse,
     NoteCreate,
     NoteListResponse,
     NoteResponse,
@@ -19,13 +25,20 @@ from app.counselors.schemas import (
     SessionListResponse,
     SessionResponse,
     SessionUpdate,
+    SlotListResponse,
     StudentListResponse,
 )
 from app.counselors.service import (
+    add_availability,
     add_session_note,
+    book_slot,
     create_session,
+    delete_availability,
     get_counselor_id,
+    get_open_slots,
     list_counselor_students,
+    list_directory,
+    list_my_availability,
     list_session_notes,
     list_sessions,
     update_session,
@@ -33,6 +46,98 @@ from app.counselors.service import (
 from database.session import get_db
 
 router = APIRouter()
+
+
+# -------------------------------------------------------------------
+# Platform-wide directory & booking (students/parents)
+# -------------------------------------------------------------------
+
+@router.get(
+    "/directory",
+    response_model=CounselorDirectoryResponse,
+    dependencies=[Depends(require_role("student", "parent", "admin"))],
+)
+async def get_directory(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Every active, verified counselor platform-wide. Bookable by any student/parent."""
+    return await list_directory(db)
+
+
+@router.get(
+    "/{counselor_id}/slots",
+    response_model=SlotListResponse,
+    dependencies=[Depends(require_role("student", "parent", "admin"))],
+)
+async def get_slots(
+    counselor_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """A counselor's open, upcoming slots."""
+    return await get_open_slots(db, counselor_id)
+
+
+@router.post(
+    "/book",
+    response_model=BookResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("student"))],
+)
+async def book_counselor(
+    payload: BookRequest,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Book an open counselor slot (platform-wide)."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await book_slot(db, student_id, payload)
+
+
+# -------------------------------------------------------------------
+# Counselor: manage own availability
+# -------------------------------------------------------------------
+
+@router.get(
+    "/availability",
+    response_model=SlotListResponse,
+    dependencies=[Depends(require_role("counselor"))],
+)
+async def my_availability(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """List the current counselor's upcoming slots."""
+    counselor_id = await get_counselor_id(db, current_user.user_id)
+    return await list_my_availability(db, counselor_id)
+
+
+@router.post(
+    "/availability",
+    response_model=AvailabilitySlot,
+    status_code=201,
+    dependencies=[Depends(require_role("counselor"))],
+)
+async def create_availability(
+    payload: AvailabilityCreate,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Offer a new bookable slot."""
+    counselor_id = await get_counselor_id(db, current_user.user_id)
+    return await add_availability(db, counselor_id, payload)
+
+
+@router.delete(
+    "/availability/{slot_id}",
+    status_code=204,
+    dependencies=[Depends(require_role("counselor"))],
+)
+async def remove_availability(
+    slot_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Remove one of the counselor's own (unbooked) slots."""
+    counselor_id = await get_counselor_id(db, current_user.user_id)
+    await delete_availability(db, counselor_id, slot_id)
 
 
 @router.get(

@@ -270,6 +270,47 @@ export interface ChildInsightResponse {
   last_updated: string | null;
 }
 
+// ── Counselors (platform-wide directory & booking) ────────────────────
+
+export interface AvailabilitySlot {
+  slot_id: string;
+  start_at: string;
+  end_at: string;
+  is_booked: boolean;
+}
+
+export interface CounselorDirectoryItem {
+  counselor_id: string;
+  name: string;
+  photo: string | null;
+  bio: string | null;
+  qualification: string | null;
+  specializations: string[];
+  languages: string[];
+  experience_years: number | null;
+  rating: number | null;
+  next_slots: AvailabilitySlot[];
+}
+
+export interface CounselorDirectoryResponse {
+  counselors: CounselorDirectoryItem[];
+  total: number;
+}
+
+export interface SlotListResponse {
+  counselor_id: string;
+  slots: AvailabilitySlot[];
+}
+
+export interface BookResponse {
+  counselor_session_id: string;
+  counselor_id: string;
+  counselor_name: string;
+  scheduled_at: string;
+  status: string;
+  message: string;
+}
+
 // ── API Error ─────────────────────────────────────────────────────────
 
 export interface ApiError {

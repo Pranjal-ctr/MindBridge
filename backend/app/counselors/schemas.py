@@ -79,3 +79,61 @@ class NoteListResponse(BaseModel):
 class StudentListResponse(BaseModel):
     students: list[StudentCounselorProfile]
     total: int
+
+
+# -------------------------------------------------------------------
+# Platform-wide directory & booking (Phase 5)
+# -------------------------------------------------------------------
+
+class AvailabilitySlot(BaseModel):
+    """A bookable counselor time slot."""
+    slot_id: uuid.UUID
+    start_at: datetime
+    end_at: datetime
+    is_booked: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class SlotListResponse(BaseModel):
+    counselor_id: uuid.UUID
+    slots: list[AvailabilitySlot]
+
+
+class CounselorDirectoryItem(BaseModel):
+    """A counselor as shown on the platform-wide Book Counselling page."""
+    counselor_id: uuid.UUID
+    name: str
+    photo: str | None = None
+    bio: str | None = None
+    qualification: str | None = None
+    specializations: list[str] = []
+    languages: list[str] = []
+    experience_years: int | None = None
+    rating: float | None = None
+    next_slots: list[AvailabilitySlot] = []
+
+
+class CounselorDirectoryResponse(BaseModel):
+    counselors: list[CounselorDirectoryItem]
+    total: int
+
+
+class AvailabilityCreate(BaseModel):
+    """Counselor offers a bookable slot."""
+    start_at: datetime
+    end_at: datetime
+
+
+class BookRequest(BaseModel):
+    """Student books an open slot."""
+    slot_id: uuid.UUID
+
+
+class BookResponse(BaseModel):
+    counselor_session_id: uuid.UUID
+    counselor_id: uuid.UUID
+    counselor_name: str
+    scheduled_at: datetime
+    status: str
+    message: str = "Session booked"
