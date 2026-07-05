@@ -23,7 +23,13 @@ from app.ai.prompts import (
 )
 from app.ai.safety import log_safety_events
 from app.config import settings
-from database.models import AIPromptVersion, Conversation, MemoryItem, Message
+from database.models import (
+    AIPromptVersion,
+    Conversation,
+    MemoryItem,
+    Message,
+    StudentOnboarding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +158,40 @@ async def load_student_memories(
         pin_marker = " [PINNED]" if mem.is_pinned else ""
         lines.append(f"- {label}{pin_marker}: {mem.content}")
 
+    return "\n".join(lines)
+
+
+async def load_student_onboarding_context(
+    db: AsyncSession,
+    student_id: uuid.UUID,
+) -> str:
+    """
+    Load the student's onboarding questionnaire as a prompt-injection block
+    so Comrade can personalize tone and focus. Returns "" if not completed.
+    """
+    result = await db.execute(
+        select(StudentOnboarding).where(StudentOnboarding.student_id == student_id)
+    )
+    ob = result.scalar_one_or_none()
+    if ob is None:
+        return ""
+
+    lines = ["STUDENT PROFILE (from onboarding -- use to personalize your support):"]
+    if ob.class_level:
+        lines.append(f"- Class/Level: {ob.class_level}")
+    if ob.help_goals:
+        lines.append(f"- Wants help with: {', '.join(ob.help_goals)}")
+    if ob.hobbies:
+        lines.append(f"- Hobbies: {', '.join(ob.hobbies)}")
+    if ob.strengths:
+        lines.append(f"- Strengths: {', '.join(ob.strengths)}")
+    if ob.interaction_style:
+        lines.append(f"- Preferred interaction style: {ob.interaction_style} "
+                     "(adapt your tone to this)")
+
+    # Only the header means nothing useful was stored
+    if len(lines) == 1:
+        return ""
     return "\n".join(lines)
 
 
@@ -407,7 +447,11 @@ async def generate_comrade_response(
     # 1. Load active prompt
     system_prompt, prompt_version = await _load_active_prompt(db)
 
-    # 2. Load student memories and inject into system prompt
+    # 2. Load onboarding profile + memories and inject into system prompt
+    onboarding_context = await load_student_onboarding_context(db, student_id)
+    if onboarding_context:
+        system_prompt = f"{system_prompt}\n\n{onboarding_context}"
+
     memory_context = await load_student_memories(db, student_id)
     if memory_context:
         system_prompt = f"{system_prompt}\n\n{memory_context}"

@@ -3,10 +3,24 @@ import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { useConversations, useMessages } from '../../hooks/useConversations';
+import { StudentOnboarding } from './StudentOnboarding';
+import api from '../../lib/api';
+import type { OnboardingResponse } from '../../lib/types';
 
 export function StudentDashboard() {
   const { user, logout } = useAuth();
   const { conversations, isLoading: convsLoading, createConversation, deleteConversation, refetch: refetchConversations } = useConversations();
+
+  // First-login onboarding: show the wizard once until completed
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<OnboardingResponse | null>('/onboarding/')
+      .then((res) => { if (!cancelled && !res.data) setShowOnboarding(true); })
+      .catch(() => {/* non-fatal: skip onboarding gate on error */});
+    return () => { cancelled = true; };
+  }, []);
 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const { messages, isLoading: msgsLoading, isSending, sendMessage } = useMessages(activeConversationId);
@@ -92,6 +106,7 @@ export function StudentDashboard() {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
+      {showOnboarding && <StudentOnboarding onComplete={() => setShowOnboarding(false)} />}
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-50 w-64 bg-sidebar border-r border-sidebar-border transition-transform duration-300 ease-in-out`}>
         <div className="flex flex-col h-full">

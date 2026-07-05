@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     AI_DAILY_MESSAGE_LIMIT: int = 100  # Max chat AI calls per student per day (spend cap)
 
     # -------------------------------------------------------------------
+    # Google OAuth (Sign in with Google) -- ID-token flow
+    # -------------------------------------------------------------------
+    GOOGLE_CLIENT_ID: str = ""       # Set to enable Google sign-in; blank = feature disabled
+    GOOGLE_CLIENT_SECRET: str = ""   # Reserved for future server-side auth-code flows
+
+    # -------------------------------------------------------------------
+    # Email delivery (interface only for now -- see app/email/)
+    # -------------------------------------------------------------------
+    EMAIL_PROVIDER: str = "noop"  # noop | resend | sendgrid | ses | smtp (future)
+
+    # -------------------------------------------------------------------
     # Pagination
     # -------------------------------------------------------------------
     DEFAULT_PAGE_SIZE: int = 20

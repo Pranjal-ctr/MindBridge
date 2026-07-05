@@ -71,3 +71,38 @@ class AuthResponse(BaseModel):
     """Combined auth response with tokens and user info."""
     tokens: TokenResponse
     user: UserResponse
+
+
+# Google Sign-In ----------------------------------------------------
+
+class GoogleAuthRequest(BaseModel):
+    """Frontend posts a Google ID token obtained via Google Identity Services."""
+    id_token: str = Field(..., min_length=10)
+
+
+class GoogleAuthResponse(BaseModel):
+    """
+    Result of /auth/google.
+
+    - status="authenticated": existing/linked account -> tokens + user present.
+    - status="registration_required": new Google user -> registration_token +
+      prefilled Google profile; frontend collects role + mobile + institution
+      code and calls /auth/google/complete.
+    """
+    status: str  # "authenticated" | "registration_required"
+    tokens: TokenResponse | None = None
+    user: UserResponse | None = None
+    registration_token: str | None = None
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    profile_image: str | None = None
+
+
+class GoogleCompleteRequest(BaseModel):
+    """Complete a Google signup with the only fields Google can't provide."""
+    registration_token: str = Field(..., min_length=10)
+    role: str = Field(..., pattern=r"^(student|parent)$")
+    phone: str = Field(..., min_length=5, max_length=20)
+    school_code: str | None = Field(None, max_length=50)
+    invite_code: str | None = Field(None, max_length=10)

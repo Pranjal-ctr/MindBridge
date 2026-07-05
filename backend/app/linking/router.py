@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import CurrentUser, require_role
 from app.linking.schemas import (
+    GuardianCreate,
+    GuardianListResponse,
+    GuardianResponse,
+    GuardianUpdate,
     InviteCodeCreateResponse,
     InviteCodeResponse,
     LinkedChildrenListResponse,
@@ -21,12 +25,17 @@ from app.linking.schemas import (
     RedeemInviteResponse,
 )
 from app.linking.service import (
+    create_guardian,
+    delete_guardian,
+    generate_guardian_invite_code,
     generate_invite_code,
     get_active_invite_code,
     get_linked_children,
     get_linked_parents,
+    list_guardians,
     redeem_invite_code,
     revoke_parent_link,
+    update_guardian,
 )
 from database.session import get_db
 
@@ -132,6 +141,82 @@ async def revoke_parent(
 ):
     """Revoke a parent's access to the student's data."""
     await revoke_parent_link(db, current_user.user_id, link_id)
+
+
+# -------------------------------------------------------------------
+# Student: Guardian Management
+# -------------------------------------------------------------------
+
+@router.get(
+    "/guardians",
+    response_model=GuardianListResponse,
+    dependencies=[Depends(require_role("student"))],
+)
+async def get_guardians(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """List the student's guardian records."""
+    return await list_guardians(db, current_user.user_id)
+
+
+@router.post(
+    "/guardians",
+    response_model=GuardianResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("student"))],
+)
+async def add_guardian(
+    payload: GuardianCreate,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Add a guardian (name, email, phone, relationship; optionally primary)."""
+    return await create_guardian(db, current_user.user_id, payload)
+
+
+@router.patch(
+    "/guardians/{guardian_id}",
+    response_model=GuardianResponse,
+    dependencies=[Depends(require_role("student"))],
+)
+async def edit_guardian(
+    guardian_id: uuid.UUID,
+    payload: GuardianUpdate,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Edit a guardian record."""
+    return await update_guardian(db, current_user.user_id, guardian_id, payload)
+
+
+@router.delete(
+    "/guardians/{guardian_id}",
+    status_code=204,
+    dependencies=[Depends(require_role("student"))],
+)
+async def remove_guardian(
+    guardian_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete a guardian record."""
+    await delete_guardian(db, current_user.user_id, guardian_id)
+
+
+@router.post(
+    "/guardians/{guardian_id}/invite-code",
+    response_model=InviteCodeCreateResponse,
+    status_code=201,
+    dependencies=[Depends(require_role("student"))],
+)
+async def create_guardian_invite_code(
+    guardian_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Generate an invite code for this guardian to share with the parent."""
+    return await generate_guardian_invite_code(db, current_user.user_id, guardian_id)
 
 
 # -------------------------------------------------------------------

@@ -16,6 +16,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.linking.schemas import (
+    GuardianCreate,
+    GuardianListResponse,
+    GuardianResponse,
+    GuardianUpdate,
     InviteCodeCreateResponse,
     InviteCodeResponse,
     LinkedChildResponse,
@@ -25,6 +29,7 @@ from app.linking.schemas import (
 from database.models import (
     ParentInviteCode,
     ParentProfile,
+    StudentGuardian,
     StudentParentLink,
     StudentProfile,
     User,
@@ -245,6 +250,16 @@ async def redeem_invite_code(
     invite.is_used = True
     invite.used_by = parent.parent_id
 
+    # If this code was generated for a specific guardian record, mark it linked
+    if invite.guardian_id:
+        guardian_result = await db.execute(
+            select(StudentGuardian).where(StudentGuardian.guardian_id == invite.guardian_id)
+        )
+        guardian = guardian_result.scalar_one_or_none()
+        if guardian:
+            guardian.status = "linked"
+            guardian.linked_parent_id = parent.parent_id
+
     try:
         await db.flush()
     except IntegrityError:
@@ -351,3 +366,185 @@ async def get_linked_children(db: AsyncSession, user_id: uuid.UUID) -> list[Link
         )
 
     return children
+
+
+# -------------------------------------------------------------------
+# Student: Guardian Management
+# -------------------------------------------------------------------
+
+async def _new_unique_code(db: AsyncSession) -> str:
+    """Generate an unused invite code (retry on collision)."""
+    for _ in range(10):
+        code = _generate_code()
+        collision = await db.execute(
+            select(ParentInviteCode).where(ParentInviteCode.code == code)
+        )
+        if not collision.scalar_one_or_none():
+            return code
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Unable to generate unique code. Try again.",
+    )
+
+
+async def _active_code_for_guardian(
+    db: AsyncSession, guardian_id: uuid.UUID
+) -> str | None:
+    """Return the guardian's current active (unused, unexpired) invite code string."""
+    result = await db.execute(
+        select(ParentInviteCode)
+        .where(
+            ParentInviteCode.guardian_id == guardian_id,
+            ParentInviteCode.is_used == False,  # noqa: E712
+            ParentInviteCode.expires_at > datetime.now(timezone.utc),
+        )
+        .order_by(ParentInviteCode.created_at.desc())
+        .limit(1)
+    )
+    code = result.scalar_one_or_none()
+    return code.code if code else None
+
+
+async def _guardian_to_response(db: AsyncSession, guardian: StudentGuardian) -> GuardianResponse:
+    return GuardianResponse(
+        guardian_id=guardian.guardian_id,
+        name=guardian.name,
+        email=guardian.email,
+        phone=guardian.phone,
+        relationship=guardian.relationship_,
+        is_primary=guardian.is_primary,
+        status=guardian.status,
+        invite_code=await _active_code_for_guardian(db, guardian.guardian_id),
+        created_at=guardian.created_at,
+    )
+
+
+async def list_guardians(db: AsyncSession, user_id: uuid.UUID) -> GuardianListResponse:
+    """List all guardians a student has added."""
+    student = await _get_student_profile(db, user_id)
+    result = await db.execute(
+        select(StudentGuardian)
+        .where(StudentGuardian.student_id == student.student_id)
+        .order_by(StudentGuardian.is_primary.desc(), StudentGuardian.created_at.asc())
+    )
+    guardians = result.scalars().all()
+    items = [await _guardian_to_response(db, g) for g in guardians]
+    return GuardianListResponse(guardians=items)
+
+
+async def _clear_primary(db: AsyncSession, student_id: uuid.UUID) -> None:
+    """Unset is_primary on all of a student's guardians (before setting a new one)."""
+    result = await db.execute(
+        select(StudentGuardian).where(
+            StudentGuardian.student_id == student_id,
+            StudentGuardian.is_primary == True,  # noqa: E712
+        )
+    )
+    for g in result.scalars().all():
+        g.is_primary = False
+    await db.flush()
+
+
+async def create_guardian(
+    db: AsyncSession, user_id: uuid.UUID, payload: GuardianCreate
+) -> GuardianResponse:
+    """Add a guardian record for the student."""
+    student = await _get_student_profile(db, user_id)
+
+    if payload.is_primary:
+        await _clear_primary(db, student.student_id)
+
+    guardian = StudentGuardian(
+        guardian_id=uuid.uuid4(),
+        student_id=student.student_id,
+        name=payload.name,
+        email=payload.email.lower() if payload.email else None,
+        phone=payload.phone,
+        relationship_=payload.relationship,
+        is_primary=payload.is_primary,
+        status="pending",
+    )
+    db.add(guardian)
+    await db.flush()
+    await db.refresh(guardian)
+    return await _guardian_to_response(db, guardian)
+
+
+async def _get_owned_guardian(
+    db: AsyncSession, student_id: uuid.UUID, guardian_id: uuid.UUID
+) -> StudentGuardian:
+    result = await db.execute(
+        select(StudentGuardian).where(
+            StudentGuardian.guardian_id == guardian_id,
+            StudentGuardian.student_id == student_id,
+        )
+    )
+    guardian = result.scalar_one_or_none()
+    if not guardian:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guardian not found")
+    return guardian
+
+
+async def update_guardian(
+    db: AsyncSession, user_id: uuid.UUID, guardian_id: uuid.UUID, payload: GuardianUpdate
+) -> GuardianResponse:
+    """Edit a guardian record."""
+    student = await _get_student_profile(db, user_id)
+    guardian = await _get_owned_guardian(db, student.student_id, guardian_id)
+
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("is_primary") is True:
+        await _clear_primary(db, student.student_id)
+
+    for field, value in data.items():
+        if field == "relationship":
+            guardian.relationship_ = value
+        elif field == "email":
+            guardian.email = value.lower() if value else None
+        else:
+            setattr(guardian, field, value)
+
+    await db.flush()
+    await db.refresh(guardian)
+    return await _guardian_to_response(db, guardian)
+
+
+async def delete_guardian(db: AsyncSession, user_id: uuid.UUID, guardian_id: uuid.UUID) -> None:
+    """Remove a guardian record (does not revoke an already-linked parent account)."""
+    student = await _get_student_profile(db, user_id)
+    guardian = await _get_owned_guardian(db, student.student_id, guardian_id)
+    await db.delete(guardian)
+    await db.flush()
+
+
+async def generate_guardian_invite_code(
+    db: AsyncSession, user_id: uuid.UUID, guardian_id: uuid.UUID
+) -> InviteCodeCreateResponse:
+    """Generate (or regenerate) an invite code tied to a specific guardian."""
+    student = await _get_student_profile(db, user_id)
+    guardian = await _get_owned_guardian(db, student.student_id, guardian_id)
+
+    # Invalidate this guardian's existing unused codes
+    existing = await db.execute(
+        select(ParentInviteCode).where(
+            ParentInviteCode.guardian_id == guardian_id,
+            ParentInviteCode.is_used == False,  # noqa: E712
+        )
+    )
+    for old in existing.scalars().all():
+        old.is_used = True
+
+    code = await _new_unique_code(db)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=CODE_EXPIRY_HOURS)
+    invite = ParentInviteCode(
+        code_id=uuid.uuid4(),
+        student_id=student.student_id,
+        guardian_id=guardian.guardian_id,
+        code=code,
+        is_used=False,
+        expires_at=expires_at,
+    )
+    db.add(invite)
+    await db.flush()
+
+    return InviteCodeCreateResponse(code=code, expires_at=expires_at)

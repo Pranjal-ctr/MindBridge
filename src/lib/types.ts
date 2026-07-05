@@ -47,6 +47,71 @@ export interface AuthResponse {
   user: UserResponse;
 }
 
+// ── Google Sign-In ────────────────────────────────────────────────────
+
+export interface GoogleAuthResponse {
+  status: 'authenticated' | 'registration_required';
+  tokens: TokenResponse | null;
+  user: UserResponse | null;
+  registration_token: string | null;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  profile_image: string | null;
+}
+
+export interface GoogleCompleteRequest {
+  registration_token: string;
+  role: 'student' | 'parent';
+  phone: string;
+  school_code?: string | null;
+  invite_code?: string | null;
+}
+
+// ── Onboarding ────────────────────────────────────────────────────────
+
+export interface OnboardingSubmit {
+  class_level: string;
+  help_goals: string[];
+  hobbies: string[];
+  strengths: string[];
+  interaction_style: string;
+}
+
+export interface OnboardingResponse {
+  class_level: string | null;
+  help_goals: string[];
+  hobbies: string[];
+  strengths: string[];
+  interaction_style: string | null;
+  completed_at: string;
+}
+
+// ── Guardians ─────────────────────────────────────────────────────────
+
+export type GuardianRelationship =
+  | 'mother' | 'father' | 'guardian' | 'grandparent' | 'sibling' | 'other';
+
+export interface GuardianCreate {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  relationship: GuardianRelationship;
+  is_primary?: boolean;
+}
+
+export interface GuardianResponse {
+  guardian_id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  relationship: string;
+  is_primary: boolean;
+  status: string;
+  invite_code: string | null;
+  created_at: string;
+}
+
 // ── Conversations ─────────────────────────────────────────────────────
 
 export interface ConversationCreate {

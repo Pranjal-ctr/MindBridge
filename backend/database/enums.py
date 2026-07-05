@@ -145,3 +145,27 @@ class AIFeatureName(str, enum.Enum):
     COMRADE_CHAT = "comrade_chat"
     MEMORY_EXTRACTION = "memory_extraction"
     TITLE_GENERATION = "title_generation"
+    RISK_DETECTION = "risk_detection"
+    PARENT_INSIGHT = "parent_insight"
+
+
+class AuthProvider(str, enum.Enum):
+    """How a user account authenticates."""
+    PASSWORD = "password"
+    GOOGLE = "google"
+
+
+class GuardianRelationship(str, enum.Enum):
+    """Guardian relationship to a student."""
+    MOTHER = "mother"
+    FATHER = "father"
+    GUARDIAN = "guardian"
+    GRANDPARENT = "grandparent"
+    SIBLING = "sibling"
+    OTHER = "other"
+
+
+class GuardianStatus(str, enum.Enum):
+    """Whether a guardian record has been linked to a parent account."""
+    PENDING = "pending"
+    LINKED = "linked"

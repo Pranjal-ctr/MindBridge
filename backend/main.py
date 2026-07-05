@@ -45,6 +45,7 @@ app = FastAPI(
         {"name": "🔔 Notifications", "description": "User notification management"},
         {"name": "💳 Subscriptions", "description": "Subscription and payment management"},
         {"name": "🔗 Linking", "description": "Parent-student account linking with invite codes"},
+        {"name": "🎓 Onboarding", "description": "Student first-login questionnaire"},
         {"name": "⚙️ Admin", "description": "MindBridge platform administration"},
         {"name": "🏥 Health", "description": "System health checks"},
     ],
@@ -77,6 +78,7 @@ from app.notifications.router import router as notifications_router  # noqa: E40
 from app.subscriptions.router import router as subscriptions_router  # noqa: E402
 from app.admin.router import router as admin_router  # noqa: E402
 from app.linking.router import router as linking_router  # noqa: E402
+from app.onboarding.router import router as onboarding_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/auth", tags=["🔐 Auth"])
 app.include_router(users_router, prefix="/users", tags=["👤 Users"])
@@ -91,6 +93,7 @@ app.include_router(notifications_router, prefix="/notifications", tags=["🔔 No
 app.include_router(subscriptions_router, prefix="/subscriptions", tags=["💳 Subscriptions"])
 app.include_router(admin_router, prefix="/admin", tags=["⚙️ Admin"])
 app.include_router(linking_router, prefix="/linking", tags=["🔗 Linking"])
+app.include_router(onboarding_router, prefix="/onboarding", tags=["🎓 Onboarding"])
 
 
 # -------------------------------------------------------------------

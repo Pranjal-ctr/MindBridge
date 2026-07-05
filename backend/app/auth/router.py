@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import (
     AuthResponse,
+    GoogleAuthRequest,
+    GoogleAuthResponse,
+    GoogleCompleteRequest,
     LoginRequest,
     RefreshTokenRequest,
     SignupRequest,
@@ -20,6 +23,8 @@ from app.auth.schemas import (
 )
 from app.auth.service import (
     authenticate_user,
+    google_authenticate,
+    google_complete_registration,
     refresh_access_token,
     register_user,
     verify_email,
@@ -70,6 +75,43 @@ async def login(
     Returns JWT access & refresh tokens with user profile.
     """
     user, tokens = await authenticate_user(db, payload.email, payload.password)
+    return AuthResponse(
+        tokens=tokens,
+        user=UserResponse.model_validate(user),
+    )
+
+
+@router.post(
+    "/google",
+    response_model=GoogleAuthResponse,
+    dependencies=[Depends(rate_limit("login", 10))],
+)
+async def google_auth(
+    payload: GoogleAuthRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Sign in / sign up / link with Google (ID-token flow).
+
+    Returns either the normal token pair (existing or linked account) or a
+    registration_required result carrying a short-lived registration token for
+    new users, who then call /auth/google/complete with mobile + institution code.
+    """
+    return await google_authenticate(db, payload.id_token)
+
+
+@router.post(
+    "/google/complete",
+    response_model=AuthResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limit("signup", 10))],
+)
+async def google_complete(
+    payload: GoogleCompleteRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Finish a Google signup (student/parent only) with mobile + institution code."""
+    user, tokens = await google_complete_registration(db, payload)
     return AuthResponse(
         tokens=tokens,
         user=UserResponse.model_validate(user),

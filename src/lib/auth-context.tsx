@@ -15,6 +15,8 @@ import {
 import api, { clearTokens, getAccessToken, setTokens } from './api';
 import type {
   AuthResponse,
+  GoogleAuthResponse,
+  GoogleCompleteRequest,
   LoginRequest,
   SignupRequest,
   UserResponse,
@@ -31,6 +33,10 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   login: (credentials: LoginRequest) => Promise<UserResponse>;
   signup: (payload: SignupRequest) => Promise<UserResponse>;
+  /** Exchange a Google ID token. Returns either the logged-in user or a registration prompt. */
+  loginWithGoogle: (idToken: string) => Promise<GoogleAuthResponse>;
+  /** Finish a Google signup with mobile + institution code. */
+  completeGoogleSignup: (payload: GoogleCompleteRequest) => Promise<UserResponse>;
   logout: () => void;
 }
 
@@ -79,6 +85,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data.user;
   }, []);
 
+  const loginWithGoogle = useCallback(async (idToken: string): Promise<GoogleAuthResponse> => {
+    const { data } = await api.post<GoogleAuthResponse>('/auth/google', { id_token: idToken });
+    if (data.status === 'authenticated' && data.tokens && data.user) {
+      setTokens(data.tokens.access_token, data.tokens.refresh_token);
+      setUser(data.user);
+    }
+    return data;
+  }, []);
+
+  const completeGoogleSignup = useCallback(
+    async (payload: GoogleCompleteRequest): Promise<UserResponse> => {
+      const { data } = await api.post<AuthResponse>('/auth/google/complete', payload);
+      setTokens(data.tokens.access_token, data.tokens.refresh_token);
+      setUser(data.user);
+      return data.user;
+    },
+    []
+  );
+
   const logout = useCallback(() => {
     clearTokens();
     setUser(null);
@@ -91,9 +116,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       login,
       signup,
+      loginWithGoogle,
+      completeGoogleSignup,
       logout,
     }),
-    [user, isLoading, login, signup, logout]
+    [user, isLoading, login, signup, loginWithGoogle, completeGoogleSignup, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

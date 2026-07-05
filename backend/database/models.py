@@ -122,7 +122,12 @@ class User(Base, FullTimestampMixin):
         UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE")
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Nullable: Google-only accounts have no local password.
+    password_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    google_sub: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    auth_provider: Mapped[str] = mapped_column(
+        String(20), default="password", server_default="password", nullable=False
+    )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -205,6 +210,12 @@ class StudentProfile(Base, TimestampMixin):
     timeline_events: Mapped[list[StudentTimeline]] = relationship(back_populates="student")
     files: Mapped[list[File]] = relationship(back_populates="student")
     invite_codes: Mapped[list[ParentInviteCode]] = relationship(back_populates="student")
+    guardians: Mapped[list[StudentGuardian]] = relationship(
+        back_populates="student", cascade="all, delete-orphan"
+    )
+    onboarding: Mapped[Optional[StudentOnboarding]] = relationship(
+        back_populates="student", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class ParentProfile(Base, TimestampMixin):
@@ -310,11 +321,72 @@ class ParentInviteCode(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("parent_profiles.parent_id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Optional link to a specific guardian record this code was generated for.
+    # NULL for legacy single-code invites (StudentInviteCode page).
+    guardian_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_guardians.guardian_id", ondelete="CASCADE"),
+        nullable=True,
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Relationships
     student: Mapped[StudentProfile] = relationship(back_populates="invite_codes")
     used_by_parent: Mapped[Optional[ParentProfile]] = relationship()
+
+
+class StudentGuardian(Base, FullTimestampMixin):
+    """A guardian a student adds manually (name/email/phone/relationship).
+    One may be marked primary. Each can generate an invite code a parent redeems.
+    Distinct from StudentParentLink, which is the actual linked-account relationship."""
+    __tablename__ = "student_guardians"
+    __table_args__ = (
+        Index(
+            "uq_guardian_one_primary", "student_id",
+            unique=True, postgresql_where=text("is_primary"),
+        ),
+    )
+
+    guardian_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    phone: Mapped[Optional[str]] = mapped_column(String(20))
+    relationship_: Mapped[str] = mapped_column("relationship", String(30), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    linked_parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent_profiles.parent_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Relationships
+    student: Mapped[StudentProfile] = relationship(back_populates="guardians")
+
+
+class StudentOnboarding(Base):
+    """First-login questionnaire responses for a student. Used for AI personalization."""
+    __tablename__ = "student_onboarding"
+
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("student_profiles.student_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    class_level: Mapped[Optional[str]] = mapped_column(String(30))
+    help_goals: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+    hobbies: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+    strengths: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+    interaction_style: Mapped[Optional[str]] = mapped_column(String(50))
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    student: Mapped[StudentProfile] = relationship(back_populates="onboarding")
 
 
 # ===================================================================

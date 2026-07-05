@@ -272,3 +272,20 @@ School Code: `RHS2026`
 5. **Real-time WebSocket Chat** -- Streaming AI responses
 6. **File Uploads** -- S3/local storage for attachments
 7. **Email Notifications** -- Verification and alerts
+
+
+Before implementing any feature:
+
+1. Review existing architecture.
+2. Look for simpler solutions.
+3. Consider scalability.
+4. Consider security.
+5. Consider backward compatibility.
+6. Consider cost optimization.
+7. Explain the plan.
+8. Wait for approval.
+9. Then implement.
+
+Do not make architectural changes without explaining why.
+Prefer minimal diffs over large rewrites.
+Maintain production-quality code.

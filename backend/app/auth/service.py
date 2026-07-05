@@ -60,21 +60,7 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
 
     # 2b. Seat enforcement: student signups are capped by the school's seat limit
     if payload.role == "student":
-        seat_count = await db.execute(
-            select(func.count())
-            .select_from(User)
-            .where(
-                User.tenant_id == tenant.tenant_id,
-                User.role == "student",
-                User.is_active == True,  # noqa: E712
-            )
-        )
-        if (seat_count.scalar() or 0) >= tenant.student_limit:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your school has reached its student seat limit. "
-                       "Please contact your school administrator.",
-            )
+        await _enforce_student_seat_limit(db, tenant)
 
     # 3. Check duplicate email (normalized to lowercase)
     email = payload.email.lower()
@@ -201,6 +187,151 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> tupl
     return user, tokens
 
 
+async def google_authenticate(db: AsyncSession, google_id_token: str):
+    """
+    Authenticate (or begin registration) via a Google ID token.
+
+    Returns a GoogleAuthResponse:
+    - existing google_sub -> login
+    - existing email (password account) -> link google_sub, then login
+    - new user -> registration_required + short-lived registration token
+    """
+    from datetime import timedelta
+
+    from app.auth.google import verify_google_id_token
+    from app.auth.schemas import GoogleAuthResponse, UserResponse
+
+    info = verify_google_id_token(google_id_token)
+
+    # 1. Existing Google-linked account
+    result = await db.execute(select(User).where(User.google_sub == info["sub"]))
+    user = result.scalar_one_or_none()
+
+    # 2. Existing email/password account -> link Google to it
+    if user is None:
+        result = await db.execute(select(User).where(User.email == info["email"]))
+        user = result.scalar_one_or_none()
+        if user is not None:
+            user.google_sub = info["sub"]
+            if not user.profile_image and info.get("picture"):
+                user.profile_image = info["picture"]
+            user.is_verified = True
+
+    if user is not None:
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated. Contact your administrator.",
+            )
+        user.last_login = datetime.now(timezone.utc)
+        await db.flush()
+        tokens = _generate_tokens(user)
+        return GoogleAuthResponse(
+            status="authenticated",
+            tokens=tokens,
+            user=UserResponse.model_validate(user),
+        )
+
+    # 3. New user -> issue a short-lived registration token carrying verified profile
+    name_parts = (info.get("name") or "").strip().split(" ", 1)
+    first_name = name_parts[0] or info["email"].split("@")[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+    registration_token = create_access_token(
+        {
+            "sub": info["sub"],
+            "email": info["email"],
+            "first_name": first_name,
+            "last_name": last_name,
+            "picture": info.get("picture") or "",
+            "purpose": "google_registration",
+        },
+        expires_delta=timedelta(minutes=30),
+    )
+    return GoogleAuthResponse(
+        status="registration_required",
+        registration_token=registration_token,
+        email=info["email"],
+        first_name=first_name,
+        last_name=last_name,
+        profile_image=info.get("picture"),
+    )
+
+
+async def google_complete_registration(db: AsyncSession, payload) -> tuple[User, TokenResponse]:
+    """
+    Finish a Google signup. Only student/parent self-signup is allowed.
+    Reuses tenant resolution, seat enforcement, profile creation, and invite auto-redeem.
+    """
+    from jose import JWTError
+
+    from app.auth.schemas import GoogleCompleteRequest  # noqa: F401 (type hint clarity)
+
+    try:
+        claims = decode_token(payload.registration_token)
+        if claims.get("purpose") != "google_registration":
+            raise ValueError("wrong purpose")
+        google_sub = claims["sub"]
+        email = claims["email"].lower()
+        first_name = claims.get("first_name") or email.split("@")[0]
+        last_name = claims.get("last_name") or ""
+        picture = claims.get("picture") or None
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired Google registration session. Please try again.",
+        )
+
+    # Role is validated by the schema to student|parent; school_code required for both
+    roles_requiring_school_code = {"student", "parent"}
+    if payload.role in roles_requiring_school_code and not payload.school_code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"School code is required for {payload.role} accounts",
+        )
+
+    tenant = await _resolve_tenant(db, payload.school_code)
+
+    if payload.role == "student":
+        await _enforce_student_seat_limit(db, tenant)
+
+    # Guard against a race / double submit
+    existing = await db.execute(
+        select(User).where((User.email == email) | (User.google_sub == google_sub))
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Try signing in instead.",
+        )
+
+    user = User(
+        user_id=uuid.uuid4(),
+        tenant_id=tenant.tenant_id,
+        email=email,
+        password_hash=None,
+        google_sub=google_sub,
+        auth_provider="google",
+        role=payload.role,
+        first_name=first_name,
+        last_name=last_name,
+        phone=payload.phone,
+        profile_image=picture,
+        is_active=True,
+        is_verified=True,
+    )
+    db.add(user)
+    await db.flush()
+
+    await _create_role_profile(db, user)
+
+    if payload.role == "parent" and payload.invite_code:
+        await _auto_redeem_invite(db, user, payload.invite_code)
+
+    tokens = _generate_tokens(user)
+    return user, tokens
+
+
 async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenResponse:
     """
     Validate refresh token and issue new access token.
@@ -237,6 +368,25 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenRes
 # -------------------------------------------------------------------
 # Private helpers
 # -------------------------------------------------------------------
+
+async def _enforce_student_seat_limit(db: AsyncSession, tenant: Tenant) -> None:
+    """Raise 403 if the tenant has reached its active-student seat limit."""
+    seat_count = await db.execute(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.tenant_id == tenant.tenant_id,
+            User.role == "student",
+            User.is_active == True,  # noqa: E712
+        )
+    )
+    if (seat_count.scalar() or 0) >= tenant.student_limit:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your school has reached its student seat limit. "
+                   "Please contact your school administrator.",
+        )
+
 
 async def _resolve_tenant(db: AsyncSession, school_code: str | None) -> Tenant:
     """Look up tenant by school code, or use a default."""

@@ -92,3 +92,47 @@ class LinkedChildResponse(BaseModel):
 class LinkedChildrenListResponse(BaseModel):
     """List of children linked to a parent."""
     children: list[LinkedChildResponse]
+
+
+# -------------------------------------------------------------------
+# Guardians (student-managed)
+# -------------------------------------------------------------------
+
+_GUARDIAN_REL = r"^(mother|father|guardian|grandparent|sibling|other)$"
+
+
+class GuardianCreate(BaseModel):
+    """Student adds a guardian record."""
+    name: str = Field(..., min_length=1, max_length=200)
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=20)
+    relationship: str = Field(..., pattern=_GUARDIAN_REL)
+    is_primary: bool = False
+
+
+class GuardianUpdate(BaseModel):
+    """Edit a guardian record (all fields optional)."""
+    name: str | None = Field(None, min_length=1, max_length=200)
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=20)
+    relationship: str | None = Field(None, pattern=_GUARDIAN_REL)
+    is_primary: bool | None = None
+
+
+class GuardianResponse(BaseModel):
+    """A guardian record with its active invite code (if any)."""
+    guardian_id: uuid.UUID
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    relationship: str
+    is_primary: bool
+    status: str
+    invite_code: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GuardianListResponse(BaseModel):
+    guardians: list[GuardianResponse]
