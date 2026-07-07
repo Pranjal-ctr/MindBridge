@@ -304,17 +304,22 @@ async def send_ai_response(
 async def run_post_response_hooks(
     conversation_id: uuid.UUID,
     student_id: uuid.UUID,
+    student_user_id: uuid.UUID,
+    student_message_id: uuid.UUID | None,
     student_message_text: str,
     ai_response_text: str,
 ) -> None:
     """
-    Background task: auto-title + memory extraction after a chat exchange.
+    Background task after a chat exchange: auto-title + memory extraction,
+    then the intelligence pipeline (risk/emotion/stress analysis, wellness
+    recalc, crisis workflow, timeline, parent insights).
 
     Runs after the HTTP response is sent, in its own DB session -- these
     auxiliary AI calls must not add latency to the chat request or hold
     its transaction open.
     """
     from app.ai.service import extract_memories, generate_conversation_title
+    from app.intelligence.pipeline import run_intelligence_pipeline
     from database.session import async_session_factory
 
     try:
@@ -343,3 +348,11 @@ async def run_post_response_hooks(
             await db.commit()
     except Exception as e:
         logger.warning("Post-response hooks failed (non-fatal): %s", str(e))
+
+    # Intelligence pipeline (own session, each step individually non-fatal)
+    try:
+        await run_intelligence_pipeline(
+            conversation_id, student_id, student_user_id, student_message_id
+        )
+    except Exception as e:
+        logger.warning("Intelligence pipeline failed (non-fatal): %s", str(e))

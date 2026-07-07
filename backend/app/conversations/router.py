@@ -150,6 +150,8 @@ async def send_new_message(
         run_post_response_hooks,
         conversation_id,
         student_id,
+        current_user.user_id,
+        user_msg.message_id,
         payload.message_text,
         ai_msg.message_text,
     )

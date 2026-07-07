@@ -41,6 +41,24 @@ async def list_notifications(
     return [NotificationResponse.model_validate(n) for n in notifications], total, unread_count
 
 
+async def notify_users(
+    db: AsyncSession,
+    user_ids: list[uuid.UUID],
+    title: str,
+    message: str,
+) -> int:
+    """Create one notification per user (fan-out helper for system events).
+
+    Flushes but does not commit -- the caller owns the transaction.
+    """
+    unique_ids = set(user_ids)
+    for user_id in unique_ids:
+        db.add(Notification(user_id=user_id, title=title, message=message))
+    if unique_ids:
+        await db.flush()
+    return len(unique_ids)
+
+
 async def mark_as_read(db: AsyncSession, notification_id: uuid.UUID, user_id: uuid.UUID) -> None:
     """Mark a single notification as read."""
     await db.execute(

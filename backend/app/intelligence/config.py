@@ -58,6 +58,10 @@ async def load_config(db: AsyncSession, config_key: str) -> dict:
     return {**default, **row.config_value}
 
 
+# Severity order for escalation/de-escalation comparisons
+RISK_LEVEL_RANK = {"green": 0, "yellow": 1, "red": 2, "critical": 3}
+
+
 def derive_risk_level(overall_score: float, bands: dict) -> str:
     """Map a 0-100 risk score to a level using configured bands (server-side, never the LLM)."""
     if overall_score >= bands["critical"]:
