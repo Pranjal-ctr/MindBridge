@@ -110,6 +110,31 @@ def _reset_rate_limiter():
     _hits.clear()
 
 
+@pytest.fixture
+def mock_ai(monkeypatch):
+    """Replace AIRouter.run with canned per-feature responses.
+
+    Usage: mock_ai({"risk_detection": '{"risk": ...}'}). Features not in the
+    map raise, exercising the callers' failure paths. Callers import the router
+    module (`from app.ai import router as ai_router`), so patching the module
+    attribute covers every call site.
+    """
+    def install(responses: dict[str, str]):
+        async def fake_run(db, *, feature, **kwargs):
+            if feature not in responses:
+                raise RuntimeError(f"mock_ai: no canned response for feature {feature!r}")
+            metadata = {
+                "provider": "mock", "model": "mock-model", "response_time_ms": 1,
+                "input_tokens": 10, "output_tokens": 10,
+                "estimated_cost_usd": 0.0, "fallback_used": False,
+            }
+            return responses[feature], metadata
+
+        monkeypatch.setattr("app.ai.router.run", fake_run)
+
+    return install
+
+
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide a test database session with rollback."""

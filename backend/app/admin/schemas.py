@@ -367,3 +367,22 @@ class AuditLogResponse(BaseModel):
 class AuditLogListResponse(BaseModel):
     logs: list[AuditLogResponse]
     total: int
+
+
+# -------------------------------------------------------------------
+# Platform Config (intelligence-layer weights & thresholds)
+# -------------------------------------------------------------------
+
+class PlatformConfigResponse(BaseModel):
+    config_key: str
+    config_value: dict
+    description: str | None = None
+    source: str  # "database" | "default"
+
+
+class PlatformConfigListResponse(BaseModel):
+    configs: list[PlatformConfigResponse]
+
+
+class PlatformConfigUpdate(BaseModel):
+    config_value: dict

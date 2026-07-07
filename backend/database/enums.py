@@ -149,6 +149,13 @@ class AIFeatureName(str, enum.Enum):
     PARENT_INSIGHT = "parent_insight"
 
 
+class ReviewStatus(str, enum.Enum):
+    """Counselor review status for AI-generated risk assessments."""
+    PENDING = "pending"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
 class AuthProvider(str, enum.Enum):
     """How a user account authenticates."""
     PASSWORD = "password"

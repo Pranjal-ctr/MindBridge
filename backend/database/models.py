@@ -205,6 +205,9 @@ class StudentProfile(Base, TimestampMixin):
     goals: Mapped[list[Goal]] = relationship(back_populates="student")
     journal_entries: Mapped[list[JournalEntry]] = relationship(back_populates="student")
     risk_assessments: Mapped[list[RiskAssessment]] = relationship(back_populates="student")
+    emotion_history: Mapped[list[EmotionSnapshot]] = relationship(back_populates="student")
+    wellness_scores: Mapped[list[WellnessScore]] = relationship(back_populates="student")
+    stress_distributions: Mapped[list[StressDistribution]] = relationship(back_populates="student")
     parent_insights: Mapped[list[ParentInsightHistory]] = relationship(back_populates="student")
     counselor_sessions: Mapped[list[CounselorSession]] = relationship(back_populates="student")
     timeline_events: Mapped[list[StudentTimeline]] = relationship(back_populates="student")
@@ -509,6 +512,11 @@ class RiskAssessment(Base, TimestampMixin):
     __tablename__ = "risk_assessments"
     __table_args__ = (
         Index("ix_risk_student_level", "student_id", "risk_level"),
+        Index(
+            "ix_risk_review_pending",
+            "review_status",
+            postgresql_where=text("review_status = 'pending'"),
+        ),
     )
 
     risk_id: Mapped[uuid.UUID] = mapped_column(
@@ -520,10 +528,23 @@ class RiskAssessment(Base, TimestampMixin):
     conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.conversation_id", ondelete="SET NULL")
     )
+    message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.message_id", ondelete="SET NULL")
+    )
     risk_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
     risk_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Per-category 0-100 scores from the AI analysis, e.g. {"self_harm": 95, "family_conflict": 78}
+    categories: Mapped[Optional[dict]] = mapped_column(JSONB, server_default="{}")
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(3, 2))
+    summary: Mapped[Optional[str]] = mapped_column(Text)
     trigger_reason: Mapped[Optional[str]] = mapped_column(Text)
     generated_by: Mapped[Optional[str]] = mapped_column(String(50))
+    # NULL = not queue-relevant; 'pending' rows form the counselor review queue
+    review_status: Mapped[Optional[str]] = mapped_column(String(20))
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="SET NULL")
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     student: Mapped[StudentProfile] = relationship(back_populates="risk_assessments")
@@ -622,6 +643,94 @@ class JournalEntry(Base, TimestampMixin):
 
 
 # ===================================================================
+# Intelligence Layer (emotion, wellness score, stress distribution)
+# ===================================================================
+
+class EmotionSnapshot(Base, TimestampMixin):
+    """One AI emotion reading per analyzed student message (append-only).
+
+    Dominant emotion, stability, and weekly/monthly trends are computed on
+    read from time windows over this table -- never stored, so never stale.
+    """
+    __tablename__ = "emotion_history"
+    __table_args__ = (
+        Index("ix_emotion_student_created", "student_id", "created_at"),
+    )
+
+    emotion_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
+    )
+    conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.conversation_id", ondelete="SET NULL")
+    )
+    current_emotion: Mapped[str] = mapped_column(String(30), nullable=False)
+    intensity: Mapped[Optional[int]] = mapped_column(Integer)
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(3, 2))
+    secondary_emotions: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+
+    # Relationships
+    student: Mapped[StudentProfile] = relationship(back_populates="emotion_history")
+
+
+class WellnessScore(Base, TimestampMixin):
+    """Computed wellness score history (append-only, never overwritten).
+
+    `components` holds the full explainable breakdown:
+    {component: {raw, normalized, weight, contribution, detail}}.
+    StudentProfile.wellness_score is synced to the latest row on each recalc.
+    """
+    __tablename__ = "wellness_scores"
+    __table_args__ = (
+        Index("ix_wellness_scores_student_created", "student_id", "created_at"),
+    )
+
+    wellness_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
+    )
+    overall_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    trend: Mapped[str] = mapped_column(String(20), default="stable")
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(3, 2))
+    components: Mapped[Optional[dict]] = mapped_column(JSONB, server_default="{}")
+    explanation: Mapped[Optional[str]] = mapped_column(Text)
+    trigger_source: Mapped[Optional[str]] = mapped_column(String(30))
+
+    # Relationships
+    student: Mapped[StudentProfile] = relationship(back_populates="wellness_scores")
+
+
+class StressDistribution(Base, TimestampMixin):
+    """AI-derived stress-topic percentages (append-only; latest row is current).
+
+    `categories` maps each of the 10 fixed stress topics to 0-100. New rows are
+    smoothed against the previous one to damp single-message spikes.
+    """
+    __tablename__ = "stress_distributions"
+    __table_args__ = (
+        Index("ix_stress_student_created", "student_id", "created_at"),
+    )
+
+    distribution_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
+    )
+    conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.conversation_id", ondelete="SET NULL")
+    )
+    categories: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    # Relationships
+    student: Mapped[StudentProfile] = relationship(back_populates="stress_distributions")
+
+
+# ===================================================================
 # Parent Insights
 # ===================================================================
 
@@ -638,6 +747,8 @@ class ParentInsightHistory(Base):
     risk_level: Mapped[Optional[str]] = mapped_column(String(20))
     summary: Mapped[Optional[str]] = mapped_column(Text)
     recommendations: Mapped[Optional[str]] = mapped_column(Text)
+    # Structured AI payload: {today_insights: [], improvements: [], concerns: [], weekly_progress: ...}
+    insights_json: Mapped[Optional[dict]] = mapped_column(JSONB, server_default="{}")
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -914,6 +1025,21 @@ class AIPromptVersion(Base, TimestampMixin):
 # ===================================================================
 # Provider-Agnostic AI Layer
 # ===================================================================
+
+class PlatformConfig(Base, FullTimestampMixin):
+    """Generic platform configuration (key -> JSONB value).
+
+    DB-first with code-fallback defaults (see app/intelligence/config.py),
+    mirroring the AIFeatureRoute / AIPromptVersion pattern. Holds wellness
+    weights, risk-level bands, crisis thresholds, insight TTLs, etc. so no
+    scoring value is hardcoded.
+    """
+    __tablename__ = "platform_config"
+
+    config_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    config_value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+
 
 class AIProviderConfig(Base, FullTimestampMixin):
     """DB-driven registration of an AI provider (gemini, claude, openai, ollama, ...)."""

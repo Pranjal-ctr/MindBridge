@@ -41,6 +41,7 @@ async def _call_with_retry(
     temperature: float,
     max_output_tokens: int,
     max_retries: int,
+    response_schema: dict | None = None,
 ) -> ProviderResponse:
     for attempt in range(max_retries + 1):
         try:
@@ -50,6 +51,7 @@ async def _call_with_retry(
                 contents=contents,
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
+                response_schema=response_schema,
             )
         except Exception as e:
             if provider.is_retryable(e) and attempt < max_retries:
@@ -73,6 +75,7 @@ async def run(
     max_output_tokens: int = 1024,
     conversation_id: uuid.UUID | None = None,
     student_id: uuid.UUID | None = None,
+    response_schema: dict | None = None,
 ) -> tuple[str, dict]:
     """
     Run a generation through the configured route for `feature`.
@@ -87,6 +90,7 @@ async def run(
         db, route, route.primary_provider, route.primary_model,
         system_prompt, contents, temperature, max_output_tokens,
         feature, conversation_id, student_id,
+        response_schema=response_schema,
     )
     if text is not None:
         return text, metadata
@@ -101,6 +105,7 @@ async def run(
             system_prompt, contents, temperature, max_output_tokens,
             feature, conversation_id, student_id,
             fallback_used=True,
+            response_schema=response_schema,
         )
         if fallback_text is not None:
             return fallback_text, fallback_metadata
@@ -122,6 +127,7 @@ async def _try_provider(
     conversation_id: uuid.UUID | None,
     student_id: uuid.UUID | None,
     fallback_used: bool = False,
+    response_schema: dict | None = None,
 ) -> tuple[str | None, dict]:
     provider = factory.get_provider(provider_name)
     start_time = time.monotonic()
@@ -134,6 +140,7 @@ async def _try_provider(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             max_retries=route.max_retries,
+            response_schema=response_schema,
         )
     except Exception as e:
         elapsed_ms = int((time.monotonic() - start_time) * 1000)

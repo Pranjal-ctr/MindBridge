@@ -33,16 +33,21 @@ class GeminiProvider(AIProvider):
         contents: list[dict],
         temperature: float,
         max_output_tokens: int,
+        response_schema: dict | None = None,
     ) -> ProviderResponse:
         client = _get_client()
+        config_kwargs: dict = {
+            "system_instruction": system_prompt,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        }
+        if response_schema is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = response_schema
         response = await client.aio.models.generate_content(
             model=model,
             contents=contents,
-            config=genai.types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-            ),
+            config=genai.types.GenerateContentConfig(**config_kwargs),
         )
 
         usage = response.usage_metadata

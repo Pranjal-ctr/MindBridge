@@ -24,6 +24,9 @@ from app.admin.schemas import (
     CounselorCreate,
     CounselorListResponse,
     PlatformAnalytics,
+    PlatformConfigListResponse,
+    PlatformConfigResponse,
+    PlatformConfigUpdate,
     PlaygroundRequest,
     PlaygroundVariantResult,
     PromptCreate,
@@ -50,6 +53,7 @@ from database.models import (
     CounselorProfile,
     Message,
     ParentProfile,
+    PlatformConfig,
     StudentProfile,
     Subscription,
     Tenant,
@@ -725,3 +729,93 @@ async def list_audit_logs(
     logs = result.scalars().all()
 
     return [AuditLogResponse.model_validate(log) for log in logs], total
+
+
+# -------------------------------------------------------------------
+# Platform Config (intelligence-layer weights & thresholds)
+# -------------------------------------------------------------------
+
+async def list_platform_config(db: AsyncSession) -> PlatformConfigListResponse:
+    """All known config keys with effective (DB-merged or default) values."""
+    from app.intelligence.config import DEFAULTS, load_config
+
+    result = await db.execute(select(PlatformConfig))
+    db_keys = {row.config_key for row in result.scalars().all()}
+
+    configs = []
+    for key in DEFAULTS:
+        configs.append(PlatformConfigResponse(
+            config_key=key,
+            config_value=await load_config(db, key),
+            description=None,
+            source="database" if key in db_keys else "default",
+        ))
+    return PlatformConfigListResponse(configs=configs)
+
+
+async def get_platform_config(db: AsyncSession, config_key: str) -> PlatformConfigResponse:
+    """One config key's effective value."""
+    from app.intelligence.config import DEFAULTS, load_config
+
+    if config_key not in DEFAULTS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown config key")
+
+    result = await db.execute(
+        select(PlatformConfig).where(PlatformConfig.config_key == config_key)
+    )
+    row = result.scalar_one_or_none()
+    return PlatformConfigResponse(
+        config_key=config_key,
+        config_value=await load_config(db, config_key),
+        description=row.description if row else None,
+        source="database" if row else "default",
+    )
+
+
+async def update_platform_config(
+    db: AsyncSession, config_key: str, payload: PlatformConfigUpdate, admin_user_id: uuid.UUID
+) -> PlatformConfigResponse:
+    """Upsert a config value (known keys only). Audit-logged."""
+    from app.intelligence.config import DEFAULTS, load_config
+
+    if config_key not in DEFAULTS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown config key")
+
+    unknown = set(payload.config_value) - set(DEFAULTS[config_key])
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown sub-keys for {config_key}: {sorted(unknown)}",
+        )
+
+    if config_key == "wellness_weights":
+        total = sum(v for v in payload.config_value.values() if isinstance(v, (int, float)))
+        if not 0.99 <= total <= 1.01:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"wellness_weights must sum to 1.0 (got {total:.3f})",
+            )
+
+    result = await db.execute(
+        select(PlatformConfig).where(PlatformConfig.config_key == config_key)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = PlatformConfig(config_key=config_key, config_value=payload.config_value)
+        db.add(row)
+    else:
+        row.config_value = payload.config_value
+
+    db.add(AuditLog(
+        user_id=admin_user_id,
+        action="platform_config_update",
+        entity_type="platform_config",
+    ))
+    await db.flush()
+
+    return PlatformConfigResponse(
+        config_key=config_key,
+        config_value=await load_config(db, config_key),
+        description=row.description,
+        source="database",
+    )

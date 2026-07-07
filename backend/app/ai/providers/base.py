@@ -38,8 +38,14 @@ class AIProvider(ABC):
         contents: list[dict],
         temperature: float,
         max_output_tokens: int,
+        response_schema: dict | None = None,
     ) -> ProviderResponse:
-        """Generate a completion. Raises on failure -- the router handles retry/fallback."""
+        """Generate a completion. Raises on failure -- the router handles retry/fallback.
+
+        `response_schema` (a plain JSON-schema dict) requests structured JSON
+        output; providers that support it must constrain the response, others
+        may ignore it (callers must still parse defensively).
+        """
         ...
 
     @abstractmethod

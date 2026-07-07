@@ -16,6 +16,9 @@ from app.admin.schemas import (
     AIRouteResponse,
     AIRouteUpdate,
     AuditLogListResponse,
+    PlatformConfigListResponse,
+    PlatformConfigResponse,
+    PlatformConfigUpdate,
     BreakGlassConversationList,
     BreakGlassMessageList,
     CounselorAdminResponse,
@@ -50,16 +53,19 @@ from app.admin.service import (
     create_tenant,
     delete_tenant,
     get_platform_analytics,
+    get_platform_config,
     get_tenant_detail,
     list_ai_routes,
     list_audit_logs,
     list_counselors,
+    list_platform_config,
     list_prompts,
     list_provider_configs,
     list_tenants,
     run_playground,
     set_tenant_subscription,
     update_ai_route,
+    update_platform_config,
     update_counselor,
     update_tenant,
     update_user_admin,
@@ -406,6 +412,47 @@ async def ai_playground(
     """
     results = await run_playground(db, payload)
     return PlaygroundResponse(results=results)
+
+
+# -------------------------------------------------------------------
+# Platform Config (intelligence-layer weights & thresholds)
+# -------------------------------------------------------------------
+
+@router.get(
+    "/config",
+    response_model=PlatformConfigListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_all_platform_config(db: Annotated[AsyncSession, Depends(get_db)]):
+    """All intelligence-layer config keys with their effective values."""
+    return await list_platform_config(db)
+
+
+@router.get(
+    "/config/{config_key}",
+    response_model=PlatformConfigResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_one_platform_config(
+    config_key: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """One config key's effective (DB-merged or default) value."""
+    return await get_platform_config(db, config_key)
+
+
+@router.put(
+    "/config/{config_key}",
+    response_model=PlatformConfigResponse,
+)
+async def put_platform_config(
+    config_key: str,
+    payload: PlatformConfigUpdate,
+    admin: AdminUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Update a config value (wellness weights, risk bands, crisis thresholds, ...)."""
+    return await update_platform_config(db, config_key, payload, admin.user_id)
 
 
 # -------------------------------------------------------------------
