@@ -27,8 +27,14 @@ class RiskAssessmentResponse(BaseModel):
     conversation_id: uuid.UUID | None = None
     risk_score: float | None = None
     risk_level: str
+    categories: dict | None = None
+    confidence: float | None = None
+    summary: str | None = None
     trigger_reason: str | None = None
     generated_by: str | None = None
+    review_status: str | None = None
+    reviewed_by: uuid.UUID | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -53,3 +59,32 @@ class RiskListResponse(BaseModel):
 class RiskAlertListResponse(BaseModel):
     alerts: list[RiskAlertResponse]
     total: int
+
+
+# -------------------------------------------------------------------
+# Counselor review queue
+# -------------------------------------------------------------------
+
+class RiskQueueItem(BaseModel):
+    """Pending AI/tripwire assessment awaiting counselor review."""
+    risk_id: uuid.UUID
+    student_id: uuid.UUID
+    student_name: str
+    risk_level: str
+    risk_score: float | None = None
+    categories: dict | None = None
+    summary: str | None = None
+    trigger_reason: str | None = None
+    generated_by: str | None = None
+    created_at: datetime
+
+
+class RiskQueueListResponse(BaseModel):
+    items: list[RiskQueueItem]
+    total: int
+
+
+class RiskReviewUpdate(BaseModel):
+    """Counselor action on a queued assessment."""
+    review_status: str = Field(..., pattern=r"^(acknowledged|resolved)$")
+    note: str | None = Field(None, max_length=2000)

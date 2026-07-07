@@ -16,8 +16,17 @@ from app.risk.schemas import (
     RiskAssessmentCreate,
     RiskAssessmentResponse,
     RiskListResponse,
+    RiskQueueListResponse,
+    RiskReviewUpdate,
 )
-from app.risk.service import create_risk_assessment, get_active_risk_alerts, list_risk_assessments
+from app.risk.service import (
+    create_risk_assessment,
+    get_active_risk_alerts,
+    get_risk_queue,
+    list_risk_assessments,
+    review_risk_assessment,
+)
+from database.models import User
 from database.session import get_db
 
 router = APIRouter()
@@ -63,3 +72,36 @@ async def get_alerts(
     """Get active high-risk alerts for the current tenant."""
     alerts, total = await get_active_risk_alerts(db, tenant_id)
     return RiskAlertListResponse(alerts=alerts, total=total)
+
+
+# -------------------------------------------------------------------
+# Counselor review queue
+# -------------------------------------------------------------------
+
+@router.get(
+    "/queue",
+    response_model=RiskQueueListResponse,
+    dependencies=[Depends(require_role("counselor", "school_admin", "admin"))],
+)
+async def get_review_queue(
+    tenant_id: CurrentTenant,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Pending AI/tripwire assessments awaiting review (most severe first)."""
+    items, total = await get_risk_queue(db, tenant_id)
+    return RiskQueueListResponse(items=items, total=total)
+
+
+@router.patch(
+    "/queue/{risk_id}",
+    response_model=RiskAssessmentResponse,
+)
+async def review_queued_assessment(
+    risk_id: uuid.UUID,
+    payload: RiskReviewUpdate,
+    tenant_id: CurrentTenant,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    reviewer: Annotated[User, Depends(require_role("counselor", "school_admin", "admin"))],
+):
+    """Acknowledge or resolve a queued assessment."""
+    return await review_risk_assessment(db, risk_id, tenant_id, reviewer.user_id, payload)
