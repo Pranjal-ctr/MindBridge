@@ -95,6 +95,68 @@ class JournalEntryResponse(BaseModel):
 
 
 # -------------------------------------------------------------------
+# Wellness Score (computed by the intelligence layer)
+# -------------------------------------------------------------------
+
+class WellnessScoreResponse(BaseModel):
+    """Latest computed wellness score with the explainable breakdown."""
+    has_data: bool
+    overall: float | None = None
+    trend: str | None = None
+    confidence: float | None = None
+    components: dict | None = None
+    explanation: str | None = None
+    streak_days: int = 0
+    calculated_at: datetime | None = None
+
+
+class WellnessScorePoint(BaseModel):
+    date: datetime
+    score: float
+    trend: str
+
+
+class WellnessScoreHistoryResponse(BaseModel):
+    points: list[WellnessScorePoint]
+
+
+class MoodCheckinRequest(BaseModel):
+    """Lightweight one-tap mood check-in."""
+    mood: str = Field(..., pattern=r"^(happy|okay|down)$")
+
+
+class MoodCheckinResponse(BaseModel):
+    record: WellnessRecordResponse
+    wellness: WellnessScoreResponse
+
+
+# -------------------------------------------------------------------
+# Emotions (computed from emotion_history)
+# -------------------------------------------------------------------
+
+class EmotionTimelinePoint(BaseModel):
+    created_at: datetime
+    emotion: str
+    intensity: int | None = None
+
+
+class EmotionTrendPoint(BaseModel):
+    period: str  # ISO date (weekly trend) or week-start date (monthly trend)
+    emotion: str
+
+
+class EmotionSummaryResponse(BaseModel):
+    has_data: bool
+    current_emotion: str | None = None
+    dominant_emotion: str | None = None
+    stability: float | None = None      # 0-1: share of recent readings matching dominant
+    confidence: float | None = None
+    weekly_trend: list[EmotionTrendPoint] = []
+    monthly_trend: list[EmotionTrendPoint] = []
+    timeline: list[EmotionTimelinePoint] = []
+
+
+# -------------------------------------------------------------------
 # List Responses
 # -------------------------------------------------------------------
 

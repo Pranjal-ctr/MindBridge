@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.conversations.service import get_student_id_for_user
 from app.dependencies import CurrentUser
 from app.wellness.schemas import (
+    EmotionSummaryResponse,
     GoalCreate,
     GoalListResponse,
     GoalResponse,
@@ -21,22 +22,77 @@ from app.wellness.schemas import (
     JournalEntryCreate,
     JournalEntryResponse,
     JournalListResponse,
+    MoodCheckinRequest,
+    MoodCheckinResponse,
     WellnessListResponse,
     WellnessRecordCreate,
     WellnessRecordResponse,
+    WellnessScoreHistoryResponse,
+    WellnessScoreResponse,
 )
 from app.wellness.service import (
     create_goal,
     create_journal_entry,
     create_wellness_record,
+    get_emotion_summary,
+    get_wellness_score,
+    get_wellness_score_history,
     list_goals,
     list_journal_entries,
     list_wellness_records,
+    log_mood_checkin,
     update_goal,
 )
 from database.session import get_db
 
 router = APIRouter()
+
+
+# -------------------------------------------------------------------
+# Wellness Score & Emotions (computed by the intelligence layer)
+# -------------------------------------------------------------------
+
+@router.get("/score", response_model=WellnessScoreResponse)
+async def get_score(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Latest computed wellness score with breakdown, explanation, and streak."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await get_wellness_score(db, student_id)
+
+
+@router.get("/score/history", response_model=WellnessScoreHistoryResponse)
+async def get_score_history(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    days: int = Query(30, ge=1, le=365),
+):
+    """Wellness score timeline for charts."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await get_wellness_score_history(db, student_id, days)
+
+
+@router.post("/mood", response_model=MoodCheckinResponse, status_code=201)
+async def mood_checkin(
+    payload: MoodCheckinRequest,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """One-tap mood check-in (happy/okay/down); updates today's record and the score."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await log_mood_checkin(db, student_id, payload)
+
+
+@router.get("/emotions", response_model=EmotionSummaryResponse)
+async def get_emotions(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    window: int = Query(7, ge=1, le=30),
+):
+    """Current/dominant emotion, stability, and weekly/monthly trends."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await get_emotion_summary(db, student_id, window)
 
 
 # -------------------------------------------------------------------
