@@ -72,6 +72,33 @@ ANALYSIS_RESPONSE_SCHEMA: dict = {
 }
 
 
+INSIGHT_TYPES = ["positive", "caution", "info"]
+
+# Gemini JSON-mode schema for the parent insight narrative
+PARENT_INSIGHT_RESPONSE_SCHEMA: dict = {
+    "type": "OBJECT",
+    "properties": {
+        "summary": {"type": "STRING"},
+        "recommendations": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "today_insights": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "type": {"type": "STRING", "enum": INSIGHT_TYPES},
+                    "title": {"type": "STRING"},
+                    "body": {"type": "STRING"},
+                },
+                "required": ["type", "title", "body"],
+            },
+        },
+        "improvements": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "concerns": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["summary", "recommendations", "today_insights", "improvements", "concerns"],
+}
+
+
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -122,6 +149,27 @@ class EmotionBlock(BaseModel):
             for e in v
             if str(e).strip().lower() in _EMOTION_LOOKUP
         ][:3]
+
+
+class TodayInsight(BaseModel):
+    type: str = "info"
+    title: str
+    body: str
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _known_type(cls, v: object) -> str:
+        t = str(v).strip().lower()
+        return t if t in INSIGHT_TYPES else "info"
+
+
+class ParentInsightPayload(BaseModel):
+    """Validated parent-insight narrative from the LLM."""
+    summary: str
+    recommendations: list[str] = Field(default_factory=list)
+    today_insights: list[TodayInsight] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+    concerns: list[str] = Field(default_factory=list)
 
 
 class MessageAnalysis(BaseModel):

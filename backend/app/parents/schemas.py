@@ -38,6 +38,35 @@ class StressFactor(BaseModel):
     value: int
 
 
+class WellnessBreakdown(BaseModel):
+    """Explainable wellness score breakdown (from the latest computed score)."""
+    trend: str
+    confidence: float | None = None
+    components: dict = {}
+    explanation: str | None = None
+    calculated_at: datetime | None = None
+
+
+class RiskTrendPoint(BaseModel):
+    """Daily risk reading (levels/scores only -- never message content)."""
+    date: str
+    level: str
+    score: float | None = None
+
+
+class MoodTrendPoint(BaseModel):
+    """Daily dominant emotion."""
+    date: str
+    emotion: str
+
+
+class TodayInsightCard(BaseModel):
+    """AI-generated insight card for the parent dashboard."""
+    type: str = "info"  # positive | caution | info
+    title: str
+    body: str
+
+
 class ChildInsightResponse(BaseModel):
     """Aggregated insights for a parent's child."""
     student_id: uuid.UUID
@@ -50,6 +79,14 @@ class ChildInsightResponse(BaseModel):
     stress_factors: list[StressFactor] = []
     recommendations: list[str] = []
     last_updated: datetime | None = None
+    # Intelligence-layer fields (all additive/optional)
+    wellness_breakdown: WellnessBreakdown | None = None
+    risk_trend: list[RiskTrendPoint] = []
+    mood_trend: list[MoodTrendPoint] = []
+    today_insights: list[TodayInsightCard] = []
+    improvements: list[str] = []
+    concerns: list[str] = []
+    weekly_progress: dict = {}
 
 
 class RecommendationResponse(BaseModel):

@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import CurrentUser, require_role
@@ -41,11 +41,18 @@ async def get_insights(
     student_id: uuid.UUID,
     current_user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ):
     """
     Get aggregated wellness insights for a child.
 
-    Returns wellness trends, stress factors, and recommendations.
-    Raw conversations are never exposed.
+    Returns live wellness/risk/mood/stress data plus the latest AI narrative.
+    Raw conversations are never exposed. A stale narrative is served as-is
+    and regenerated in the background.
     """
-    return await get_child_insights(db, current_user.user_id, student_id)
+    from app.intelligence.insights import refresh_parent_insight_task
+
+    response, stale = await get_child_insights(db, current_user.user_id, student_id)
+    if stale:
+        background_tasks.add_task(refresh_parent_insight_task, student_id)
+    return response
