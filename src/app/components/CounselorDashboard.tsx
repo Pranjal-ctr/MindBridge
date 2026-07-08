@@ -2,9 +2,11 @@ import { Link } from 'react-router-dom';
 import { Brain, Calendar, Users, FileText, AlertTriangle, TrendingUp, Clock, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { CounselorAvailability } from './CounselorAvailability';
+import { RiskQueue } from './RiskQueue';
 
 export function CounselorDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [riskQueueCount, setRiskQueueCount] = useState(0);
 
   const upcomingSessions = [
     { student: 'Sarah J.', time: '2:00 PM Today', risk: 'yellow', topic: 'Academic stress' },
@@ -82,7 +84,11 @@ export function CounselorDashboard() {
             <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
               <AlertTriangle className="w-5 h-5" />
               <span>Risk Alerts</span>
-              <span className="ml-auto px-2 py-0.5 bg-destructive text-destructive-foreground rounded-full text-xs">1</span>
+              {riskQueueCount > 0 && (
+                <span className="ml-auto px-2 py-0.5 bg-destructive text-destructive-foreground rounded-full text-xs">
+                  {riskQueueCount}
+                </span>
+              )}
             </a>
           </nav>
 
@@ -104,10 +110,14 @@ export function CounselorDashboard() {
             </button>
             <h1 className="text-lg font-semibold">Counselor Dashboard</h1>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full text-sm">
-            <AlertTriangle className="w-4 h-4" />
-            <span className="hidden sm:inline">1 Risk Alert</span>
-          </div>
+          {riskQueueCount > 0 && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full text-sm">
+              <AlertTriangle className="w-4 h-4" />
+              <span className="hidden sm:inline">
+                {riskQueueCount} Risk Alert{riskQueueCount === 1 ? '' : 's'}
+              </span>
+            </div>
+          )}
         </header>
 
         <div className="p-4 md:p-6 space-y-6">
@@ -127,9 +137,12 @@ export function CounselorDashboard() {
             </div>
             <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
               <div className="text-sm text-muted-foreground mb-1">Risk Alerts</div>
-              <div className="text-2xl font-bold text-destructive">1</div>
+              <div className="text-2xl font-bold text-destructive">{riskQueueCount}</div>
             </div>
           </div>
+
+          {/* Risk review queue (live) */}
+          <RiskQueue onCountChange={setRiskQueueCount} />
 
           {/* Availability (live) */}
           <CounselorAvailability />

@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
-import { Brain, TrendingUp, Heart, AlertCircle, CheckCircle, ArrowUp, Calendar, Menu, X, Loader2, Users, KeyRound } from 'lucide-react';
+import { Brain, TrendingUp, TrendingDown, Minus, Heart, AlertCircle, CheckCircle, Info, Calendar, Menu, X, Loader2, RefreshCw, Users, KeyRound } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../lib/auth-context';
+import { useChildInsights } from '../../hooks/useChildInsights';
 import api from '../../lib/api';
-import type { LinkedChildResponse, ChildInsightResponse } from '../../lib/types';
+import type { LinkedChildResponse } from '../../lib/types';
 
 export function ParentDashboard() {
   const { user, logout } = useAuth();
@@ -15,9 +16,9 @@ export function ParentDashboard() {
   const [isLoadingChildren, setIsLoadingChildren] = useState(true);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
 
-  // Insights state
-  const [insights, setInsights] = useState<ChildInsightResponse | null>(null);
-  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  // Insights state (live: 5-min poll + refetch-on-focus + manual refresh button)
+  const { insights, isLoading: isLoadingInsights, isRefreshing, refetch: refetchInsights } =
+    useChildInsights(selectedChildId);
 
   // Redeem code state
   const [showRedeemForm, setShowRedeemForm] = useState(false);
@@ -43,27 +44,9 @@ export function ParentDashboard() {
     }
   }, [selectedChildId]);
 
-  // Fetch insights for selected child
-  const fetchInsights = useCallback(async () => {
-    if (!selectedChildId) return;
-    try {
-      setIsLoadingInsights(true);
-      const { data } = await api.get<ChildInsightResponse>(`/parents/children/${selectedChildId}/insights`);
-      setInsights(data);
-    } catch {
-      setInsights(null);
-    } finally {
-      setIsLoadingInsights(false);
-    }
-  }, [selectedChildId]);
-
   useEffect(() => {
     fetchChildren();
   }, [fetchChildren]);
-
-  useEffect(() => {
-    fetchInsights();
-  }, [fetchInsights]);
 
   // Redeem invite code
   const handleRedeem = async (e: React.FormEvent) => {
@@ -92,31 +75,27 @@ export function ParentDashboard() {
 
   const selectedChild = children.find((c) => c.student_id === selectedChildId);
 
-  // Fallback data when no insights loaded yet
-  const wellnessTrend = insights?.wellness_trend?.length
-    ? insights.wellness_trend
-    : [
-        { date: 'Mon', score: 65 },
-        { date: 'Tue', score: 68 },
-        { date: 'Wed', score: 62 },
-        { date: 'Thu', score: 70 },
-        { date: 'Fri', score: 72 },
-        { date: 'Sat', score: 75 },
-        { date: 'Sun', score: 72 },
-      ];
+  const wellnessTrend = insights?.wellness_trend ?? [];
+  const stressFactors = insights?.stress_factors ?? [];
 
-  const stressFactors = insights?.stress_factors?.length
-    ? insights.stress_factors
-    : [
-        { name: 'Academics', value: 75 },
-        { name: 'Social', value: 45 },
-        { name: 'Family', value: 30 },
-        { name: 'Future', value: 60 },
-      ];
-
-  const wellnessScore = selectedChild?.wellness_score ?? insights?.wellness_score ?? 72;
+  const wellnessScore = insights?.wellness_score ?? selectedChild?.wellness_score ?? null;
   const riskLevel = selectedChild?.risk_level ?? insights?.risk_level ?? 'green';
   const emotionalState = insights?.emotional_state ?? 'Stable';
+  const trend = insights?.wellness_breakdown?.trend ?? null;
+
+  const trendDisplay = trend === 'improving'
+    ? { Icon: TrendingUp, label: 'Improving', color: 'text-emerald-600' }
+    : trend === 'declining'
+    ? { Icon: TrendingDown, label: 'Declining', color: 'text-red-600' }
+    : trend === 'stable'
+    ? { Icon: Minus, label: 'Stable', color: 'text-muted-foreground' }
+    : null;
+
+  const insightCardStyles: Record<string, { bg: string; border: string; text: string; icon: string; Icon: typeof AlertCircle }> = {
+    positive: { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-900', icon: 'text-emerald-600', Icon: CheckCircle },
+    caution: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-900', icon: 'text-amber-600', Icon: AlertCircle },
+    info: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-900', icon: 'text-blue-600', Icon: Info },
+  };
 
   const riskColors: Record<string, { bg: string; text: string; dot: string }> = {
     green: { bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
@@ -245,10 +224,23 @@ export function ParentDashboard() {
               {selectedChild ? `${selectedChild.first_name}'s Wellness` : 'Parent Dashboard'}
             </h1>
           </div>
-          <div className={`flex items-center gap-2 px-3 py-1.5 ${riskColor.bg} ${riskColor.text} rounded-full text-sm`}>
-            <CheckCircle className="w-4 h-4" />
-            <span className="hidden sm:inline">Status: </span>
-            {riskLevel === 'green' ? 'Good' : riskLevel === 'yellow' ? 'Caution' : 'Alert'}
+          <div className="flex items-center gap-3">
+            {selectedChild && (
+              <button
+                onClick={refetchInsights}
+                disabled={isRefreshing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border border-border hover:bg-muted transition disabled:opacity-50"
+                title="Refresh insights"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            )}
+            <div className={`flex items-center gap-2 px-3 py-1.5 ${riskColor.bg} ${riskColor.text} rounded-full text-sm`}>
+              <CheckCircle className="w-4 h-4" />
+              <span className="hidden sm:inline">Status: </span>
+              {riskLevel === 'green' ? 'Good' : riskLevel === 'yellow' ? 'Caution' : 'Alert'}
+            </div>
           </div>
         </header>
 
@@ -366,13 +358,20 @@ export function ParentDashboard() {
                     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
                       <div className="flex items-center justify-between mb-4">
                         <div className="text-sm text-muted-foreground">Wellness Score</div>
-                        <div className="flex items-center gap-1 text-emerald-600 text-sm">
-                          <ArrowUp className="w-4 h-4" />
-                          <span>+5</span>
-                        </div>
+                        {trendDisplay && (
+                          <div className={`flex items-center gap-1 text-sm ${trendDisplay.color}`}>
+                            <trendDisplay.Icon className="w-4 h-4" />
+                            <span>{trendDisplay.label}</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-3xl font-bold text-foreground mb-2">{wellnessScore ?? '—'}/100</div>
-                      <div className="text-sm text-muted-foreground">Above average for age group</div>
+                      <div className="text-3xl font-bold text-foreground mb-2">
+                        {wellnessScore !== null ? `${Math.round(wellnessScore)}/100` : '—'}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {insights?.wellness_breakdown?.explanation
+                          || (wellnessScore === null ? 'Not enough data yet' : 'Awaiting first computed score')}
+                      </div>
                     </div>
 
                     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
@@ -381,7 +380,7 @@ export function ParentDashboard() {
                       </div>
                       <div className="text-3xl font-bold text-foreground mb-2">{emotionalState}</div>
                       <div className="text-sm text-muted-foreground">
-                        {insights?.summary || 'Minor academic stress detected'}
+                        {insights?.summary || 'No AI summary yet -- check back after your child chats with Comrade.'}
                       </div>
                     </div>
 
@@ -402,93 +401,108 @@ export function ParentDashboard() {
                   {/* Wellness Trend Chart */}
                   <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
                     <h2 className="text-lg font-semibold mb-4">7-Day Wellness Trend</h2>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <LineChart id="parent-wellness-trend" data={wellnessTrend}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="date" stroke="#6b7280" />
-                        <YAxis stroke="#6b7280" domain={[0, 100]} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="score" stroke="#2563EB" strokeWidth={3} dot={{ r: 4 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    {wellnessTrend.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={250}>
+                        <LineChart id="parent-wellness-trend" data={wellnessTrend}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis dataKey="date" stroke="#6b7280" />
+                          <YAxis stroke="#6b7280" domain={[0, 100]} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="score" stroke="#2563EB" strokeWidth={3} dot={{ r: 4 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="py-12 text-center text-sm text-muted-foreground">
+                        Not enough data yet -- the trend appears once your child has a few days of activity.
+                      </div>
+                    )}
+                    {insights?.wellness_breakdown && (
+                      <details className="mt-4 group">
+                        <summary className="text-sm text-primary cursor-pointer select-none">
+                          Why this score?
+                        </summary>
+                        <div className="mt-3 space-y-2">
+                          {Object.entries(insights.wellness_breakdown.components).map(([name, c]) => (
+                            <div key={name} className="flex items-center justify-between text-sm">
+                              <span className="capitalize text-muted-foreground">{name.replace(/_/g, ' ')}</span>
+                              <span className="text-foreground">{c.detail}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </div>
 
                   {/* Insights & Recommendations */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* Current Insights */}
                     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-                      <h2 className="text-lg font-semibold mb-4">Current Insights</h2>
-                      <div className="space-y-4">
-                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                          <div className="flex items-start gap-3">
-                            <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                            <div>
-                              <div className="font-medium text-amber-900">Academic Stress</div>
-                              <div className="text-sm text-amber-700 mt-1">
-                                Your child may be experiencing increased stress related to upcoming exams.
+                      <h2 className="text-lg font-semibold mb-4">Today's Insights</h2>
+                      {insights?.today_insights?.length ? (
+                        <div className="space-y-4">
+                          {insights.today_insights.map((card, idx) => {
+                            const style = insightCardStyles[card.type] ?? insightCardStyles.info;
+                            const CardIcon = style.Icon;
+                            return (
+                              <div key={idx} className={`p-4 ${style.bg} border ${style.border} rounded-lg`}>
+                                <div className="flex items-start gap-3">
+                                  <CardIcon className={`w-5 h-5 ${style.icon} flex-shrink-0 mt-0.5`} />
+                                  <div>
+                                    <div className={`font-medium ${style.text}`}>{card.title}</div>
+                                    <div className={`text-sm ${style.text} opacity-90 mt-1`}>{card.body}</div>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
+                            );
+                          })}
                         </div>
-
-                        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                          <div className="flex items-start gap-3">
-                            <Heart className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                            <div>
-                              <div className="font-medium text-blue-900">Social Engagement</div>
-                              <div className="text-sm text-blue-700 mt-1">
-                                Good peer connections observed. Continue encouraging social activities.
-                              </div>
-                            </div>
-                          </div>
+                      ) : (
+                        <div className="py-8 text-center text-sm text-muted-foreground">
+                          No insights yet -- these appear once your child starts chatting with Comrade.
                         </div>
-
-                        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
-                          <div className="flex items-start gap-3">
-                            <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
-                            <div>
-                              <div className="font-medium text-emerald-900">Regular Check-ins</div>
-                              <div className="text-sm text-emerald-700 mt-1">
-                                Your child is engaging regularly with the wellness platform.
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* Recommendations */}
                     <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
                       <h2 className="text-lg font-semibold mb-4">Parenting Recommendations</h2>
-                      <div className="space-y-4">
-                        {(insights?.recommendations?.length ? insights.recommendations : [
-                          'Dedicated One-on-One Time: Schedule 30 minutes of uninterrupted time weekly.',
-                          'Avoid Peer Comparisons: Focus on personal growth rather than comparing to others.',
-                          'Encourage Physical Activity: Outdoor activities can significantly reduce stress.',
-                        ]).map((rec, idx) => (
-                          <div
-                            key={idx}
-                            className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg"
-                          >
-                            <p className="text-sm text-blue-800">{rec}</p>
-                          </div>
-                        ))}
-                      </div>
+                      {insights?.recommendations?.length ? (
+                        <div className="space-y-4">
+                          {insights.recommendations.map((rec, idx) => (
+                            <div
+                              key={idx}
+                              className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg"
+                            >
+                              <p className="text-sm text-blue-800">{rec}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="py-8 text-center text-sm text-muted-foreground">
+                          No recommendations yet -- check back after your child has a few conversations.
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Stress Factors */}
                   <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
                     <h2 className="text-lg font-semibold mb-4">Stress Distribution</h2>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <BarChart id="parent-stress-factors" data={stressFactors}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="name" stroke="#6b7280" />
-                        <YAxis stroke="#6b7280" />
-                        <Tooltip />
-                        <Bar dataKey="value" fill="#2563EB" radius={[8, 8, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    {stressFactors.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart id="parent-stress-factors" data={stressFactors}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis dataKey="name" stroke="#6b7280" />
+                          <YAxis stroke="#6b7280" />
+                          <Tooltip />
+                          <Bar dataKey="value" fill="#2563EB" radius={[8, 8, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="py-12 text-center text-sm text-muted-foreground">
+                        No stress signals detected yet.
+                      </div>
+                    )}
                   </div>
 
                   {/* Family Communication Tips */}

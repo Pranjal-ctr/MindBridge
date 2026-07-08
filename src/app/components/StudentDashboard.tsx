@@ -3,9 +3,10 @@ import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { useConversations, useMessages } from '../../hooks/useConversations';
+import { useWellnessScore } from '../../hooks/useWellness';
 import { StudentOnboarding } from './StudentOnboarding';
 import api from '../../lib/api';
-import type { OnboardingResponse } from '../../lib/types';
+import type { MoodCheckin, OnboardingResponse } from '../../lib/types';
 
 export function StudentDashboard() {
   const { user, logout } = useAuth();
@@ -24,10 +25,12 @@ export function StudentDashboard() {
 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const { messages, isLoading: msgsLoading, isSending, sendMessage } = useMessages(activeConversationId);
+  const { score: wellness, checkInMood, refetch: refetchWellness } = useWellnessScore();
 
   const [messageInput, setMessageInput] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [selectedMood, setSelectedMood] = useState<string | null>(null);
+  const [selectedMood, setSelectedMood] = useState<MoodCheckin | null>(null);
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-select the first conversation on load
@@ -71,8 +74,24 @@ export function StudentDashboard() {
       await sendMessage(text);
       // Refetch conversations to pick up auto-generated titles
       refetchConversations();
+      // The intelligence pipeline runs as a background task after the chat
+      // response returns, so give it a moment before pulling the updated score.
+      setTimeout(() => refetchWellness(), 8000);
     } catch {
       // Error is handled by the hook
+    }
+  };
+
+  const handleMoodCheckin = async (mood: MoodCheckin) => {
+    if (isCheckingIn) return;
+    setSelectedMood(mood);
+    setIsCheckingIn(true);
+    try {
+      await checkInMood(mood);
+    } catch {
+      // Non-fatal: the button still reflects the selection locally
+    } finally {
+      setIsCheckingIn(false);
     }
   };
 
@@ -252,36 +271,54 @@ export function StudentDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 md:p-6 border-b border-border">
           <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
             <div className="text-sm text-blue-700 mb-1">Wellness Score</div>
-            <div className="text-2xl font-bold text-blue-900">72/100</div>
-            <div className="text-xs text-blue-600 mt-1">↑ 5 from last week</div>
+            <div className="text-2xl font-bold text-blue-900">
+              {wellness?.has_data ? `${Math.round(wellness.overall!)}/100` : '—'}
+            </div>
+            <div className="text-xs text-blue-600 mt-1">
+              {wellness?.has_data
+                ? wellness.trend === 'improving'
+                  ? '↑ Improving'
+                  : wellness.trend === 'declining'
+                  ? '↓ Needs attention'
+                  : 'Holding steady'
+                : 'Chat or check in to get started'}
+            </div>
           </div>
 
           <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
             <div className="text-sm text-emerald-700 mb-1">Check-in Streak</div>
-            <div className="text-2xl font-bold text-emerald-900">14 days</div>
-            <div className="text-xs text-emerald-600 mt-1">Keep it up!</div>
+            <div className="text-2xl font-bold text-emerald-900">
+              {wellness?.streak_days ?? 0} day{wellness?.streak_days === 1 ? '' : 's'}
+            </div>
+            <div className="text-xs text-emerald-600 mt-1">
+              {(wellness?.streak_days ?? 0) > 0 ? 'Keep it up!' : 'Check in today to start a streak'}
+            </div>
           </div>
 
           <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
             <div className="text-sm text-purple-700 mb-1">Today's Mood</div>
             <div className="flex gap-2 mt-2">
               {[
-                { icon: Smile, label: 'Happy', color: 'text-emerald-600' },
-                { icon: Meh, label: 'Okay', color: 'text-amber-600' },
-                { icon: Frown, label: 'Down', color: 'text-red-600' }
-              ].map((mood, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setSelectedMood(mood.label)}
-                  className={`p-2 rounded-lg transition ${
-                    selectedMood === mood.label
-                      ? 'bg-purple-200'
-                      : 'bg-white hover:bg-purple-100'
-                  }`}
-                >
-                  <mood.icon className={`w-5 h-5 ${mood.color}`} />
-                </button>
-              ))}
+                { icon: Smile, label: 'Happy' as MoodCheckin, color: 'text-emerald-600' },
+                { icon: Meh, label: 'Okay' as MoodCheckin, color: 'text-amber-600' },
+                { icon: Frown, label: 'Down' as MoodCheckin, color: 'text-red-600' }
+              ].map(({ icon: Icon, label, color }) => {
+                const value = label.toLowerCase() as MoodCheckin;
+                return (
+                  <button
+                    key={label}
+                    onClick={() => handleMoodCheckin(value)}
+                    disabled={isCheckingIn}
+                    className={`p-2 rounded-lg transition disabled:opacity-50 ${
+                      selectedMood === value
+                        ? 'bg-purple-200'
+                        : 'bg-white hover:bg-purple-100'
+                    }`}
+                  >
+                    <Icon className={`w-5 h-5 ${color}`} />
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -257,6 +257,31 @@ export interface StressFactor {
   value: number;
 }
 
+export interface WellnessBreakdown {
+  trend: string;
+  confidence: number | null;
+  components: Record<string, { normalized: number; weight: number; contribution: number; detail: string }>;
+  explanation: string | null;
+  calculated_at: string | null;
+}
+
+export interface RiskTrendPoint {
+  date: string;
+  level: string;
+  score: number | null;
+}
+
+export interface MoodTrendPoint {
+  date: string;
+  emotion: string;
+}
+
+export interface TodayInsightCard {
+  type: 'positive' | 'caution' | 'info';
+  title: string;
+  body: string;
+}
+
 export interface ChildInsightResponse {
   student_id: string;
   student_name: string;
@@ -268,6 +293,106 @@ export interface ChildInsightResponse {
   stress_factors: StressFactor[];
   recommendations: string[];
   last_updated: string | null;
+  wellness_breakdown: WellnessBreakdown | null;
+  risk_trend: RiskTrendPoint[];
+  mood_trend: MoodTrendPoint[];
+  today_insights: TodayInsightCard[];
+  improvements: string[];
+  concerns: string[];
+  weekly_progress: Record<string, number>;
+}
+
+// ── Wellness Score & Emotions ─────────────────────────────────────────
+
+export interface WellnessScoreResponse {
+  has_data: boolean;
+  overall: number | null;
+  trend: string | null;
+  confidence: number | null;
+  components: Record<string, { normalized: number; weight: number; contribution: number; detail: string }> | null;
+  explanation: string | null;
+  streak_days: number;
+  calculated_at: string | null;
+}
+
+export interface WellnessScorePoint {
+  date: string;
+  score: number;
+  trend: string;
+}
+
+export interface WellnessScoreHistoryResponse {
+  points: WellnessScorePoint[];
+}
+
+export type MoodCheckin = 'happy' | 'okay' | 'down';
+
+export interface MoodCheckinRequest {
+  mood: MoodCheckin;
+}
+
+export interface MoodCheckinResponse {
+  record: WellnessRecordResponse;
+  wellness: WellnessScoreResponse;
+}
+
+export interface WellnessRecordResponse {
+  record_id: string;
+  student_id: string;
+  mood_score: number | null;
+  stress_score: number | null;
+  confidence_score: number | null;
+  anxiety_score: number | null;
+  energy_score: number | null;
+  date_recorded: string;
+  created_at: string;
+}
+
+export interface EmotionTimelinePoint {
+  created_at: string;
+  emotion: string;
+  intensity: number | null;
+}
+
+export interface EmotionTrendPoint {
+  period: string;
+  emotion: string;
+}
+
+export interface EmotionSummaryResponse {
+  has_data: boolean;
+  current_emotion: string | null;
+  dominant_emotion: string | null;
+  stability: number | null;
+  confidence: number | null;
+  weekly_trend: EmotionTrendPoint[];
+  monthly_trend: EmotionTrendPoint[];
+  timeline: EmotionTimelinePoint[];
+}
+
+// ── Risk Queue (counselor review) ─────────────────────────────────────
+
+export interface RiskQueueItem {
+  risk_id: string;
+  student_id: string;
+  student_name: string;
+  risk_level: string;
+  risk_score: number | null;
+  categories: Record<string, number> | null;
+  summary: string | null;
+  trigger_reason: string | null;
+  generated_by: string | null;
+  created_at: string;
+}
+
+export interface RiskQueueListResponse {
+  items: RiskQueueItem[];
+  total: number;
+}
+
+export interface RiskReviewUpdate {
+  review_status: 'acknowledged' | 'resolved';
+  note?: string | null;
 }
 
 // ── Counselors (platform-wide directory & booking) ────────────────────
