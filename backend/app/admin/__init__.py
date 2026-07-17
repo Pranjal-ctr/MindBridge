@@ -1,1 +1,1 @@
-"""MindBridge Admin Module"""
+"""Kio Admin Module"""

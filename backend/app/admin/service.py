@@ -1,10 +1,11 @@
 """
-MindBridge Admin Service
+Kio Admin Service
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -386,13 +387,13 @@ async def delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> None:
 # -------------------------------------------------------------------
 
 async def _get_or_create_platform_tenant(db: AsyncSession) -> Tenant:
-    """Counselors belong to the MindBridge platform tenant, not a school."""
+    """Counselors belong to the Kio platform tenant, not a school."""
     result = await db.execute(select(Tenant).where(Tenant.school_code == "PLATFORM"))
     tenant = result.scalar_one_or_none()
     if tenant is None:
         tenant = Tenant(
             tenant_id=uuid.uuid4(),
-            tenant_name="MindBridge Platform",
+            tenant_name="Kio Platform",
             tenant_type="organization",
             school_code="PLATFORM",
             status="active",
@@ -713,22 +714,113 @@ async def run_playground(db: AsyncSession, payload: PlaygroundRequest) -> list[P
 # Audit Logs
 # -------------------------------------------------------------------
 
+def _audit_log_filters(
+    user_id: uuid.UUID | None,
+    action: str | None,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> list:
+    """Shared WHERE clauses for audit-log listing and export."""
+    filters = []
+    if user_id is not None:
+        filters.append(AuditLog.user_id == user_id)
+    if action:
+        filters.append(AuditLog.action.ilike(f"{action}%"))
+    if date_from is not None:
+        filters.append(AuditLog.created_at >= date_from)
+    if date_to is not None:
+        filters.append(AuditLog.created_at <= date_to)
+    return filters
+
+
+def _audit_row_to_response(log: AuditLog, user: User | None) -> AuditLogResponse:
+    return AuditLogResponse(
+        audit_id=log.audit_id,
+        user_id=log.user_id,
+        user_name=f"{user.first_name} {user.last_name}" if user else None,
+        user_role=user.role if user else None,
+        action=log.action,
+        entity_type=log.entity_type,
+        entity_id=log.entity_id,
+        ip_address=log.ip_address,
+        user_agent=log.user_agent,
+        details=log.details,
+        created_at=log.created_at,
+    )
+
+
 async def list_audit_logs(
-    db: AsyncSession, page: int = 1, page_size: int = 50
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 50,
+    user_id: uuid.UUID | None = None,
+    action: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> tuple[list[AuditLogResponse], int]:
-    """List audit logs (admin only)."""
-    count_result = await db.execute(select(func.count()).select_from(AuditLog))
+    """List audit logs with optional filters (admin only)."""
+    filters = _audit_log_filters(user_id, action, date_from, date_to)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(AuditLog).where(*filters)
+    )
     total = count_result.scalar() or 0
 
     result = await db.execute(
-        select(AuditLog)
+        select(AuditLog, User)
+        .outerjoin(User, AuditLog.user_id == User.user_id)
+        .where(*filters)
         .order_by(AuditLog.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    logs = result.scalars().all()
 
-    return [AuditLogResponse.model_validate(log) for log in logs], total
+    return [_audit_row_to_response(log, user) for log, user in result.all()], total
+
+
+AUDIT_EXPORT_MAX_ROWS = 10_000
+
+
+async def export_audit_logs_csv(
+    db: AsyncSession,
+    user_id: uuid.UUID | None = None,
+    action: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> str:
+    """Render filtered audit logs as CSV text (capped at AUDIT_EXPORT_MAX_ROWS)."""
+    import csv
+    import io
+    import json
+
+    result = await db.execute(
+        select(AuditLog, User)
+        .outerjoin(User, AuditLog.user_id == User.user_id)
+        .where(*_audit_log_filters(user_id, action, date_from, date_to))
+        .order_by(AuditLog.created_at.desc())
+        .limit(AUDIT_EXPORT_MAX_ROWS)
+    )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "timestamp", "user_id", "user_name", "role", "action",
+        "entity_type", "entity_id", "ip_address", "user_agent", "details",
+    ])
+    for log, user in result.all():
+        writer.writerow([
+            log.created_at.isoformat(),
+            str(log.user_id) if log.user_id else "",
+            f"{user.first_name} {user.last_name}" if user else "",
+            user.role if user else "",
+            log.action,
+            log.entity_type or "",
+            str(log.entity_id) if log.entity_id else "",
+            log.ip_address or "",
+            log.user_agent or "",
+            json.dumps(log.details) if log.details else "",
+        ])
+    return buffer.getvalue()
 
 
 # -------------------------------------------------------------------

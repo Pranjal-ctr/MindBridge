@@ -1,5 +1,5 @@
 """
-MindBridge Admin Schemas
+Kio Admin Schemas
 """
 
 from __future__ import annotations
@@ -355,10 +355,14 @@ class AuditLogResponse(BaseModel):
     """Audit log entry response."""
     audit_id: uuid.UUID
     user_id: uuid.UUID | None = None
+    user_name: str | None = None
+    user_role: str | None = None
     action: str
     entity_type: str | None = None
     entity_id: uuid.UUID | None = None
     ip_address: str | None = None
+    user_agent: str | None = None
+    details: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

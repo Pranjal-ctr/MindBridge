@@ -1,13 +1,14 @@
 """
-MindBridge Admin Router
+Kio Admin Router
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import require_role
@@ -52,6 +53,7 @@ from app.admin.service import (
     create_staff_user,
     create_tenant,
     delete_tenant,
+    export_audit_logs_csv,
     get_platform_analytics,
     get_platform_config,
     get_tenant_detail,
@@ -468,7 +470,37 @@ async def get_audit_logs(
     db: Annotated[AsyncSession, Depends(get_db)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    user_id: uuid.UUID | None = Query(None),
+    action: str | None = Query(None, max_length=100, description="Action prefix match"),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
 ):
-    """View audit trail. Platform admin only."""
-    logs, total = await list_audit_logs(db, page, page_size)
+    """View audit trail with optional filters. Platform admin only."""
+    logs, total = await list_audit_logs(
+        db, page, page_size,
+        user_id=user_id, action=action, date_from=date_from, date_to=date_to,
+    )
     return AuditLogListResponse(logs=logs, total=total)
+
+
+@router.get(
+    "/audit-logs/export",
+    dependencies=[Depends(require_role("admin"))],
+)
+async def export_audit_logs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: uuid.UUID | None = Query(None),
+    action: str | None = Query(None, max_length=100, description="Action prefix match"),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+):
+    """Export filtered audit logs as CSV. Platform admin only."""
+    csv_text = await export_audit_logs_csv(
+        db, user_id=user_id, action=action, date_from=date_from, date_to=date_to
+    )
+    filename = f"kio-audit-logs-{datetime.utcnow().date().isoformat()}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

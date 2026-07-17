@@ -1,5 +1,5 @@
 """
-MindBridge SQLAlchemy 2.0 Models
+Kio SQLAlchemy 2.0 Models
 All 27 tables with typed relationships and multi-tenancy support.
 """
 
@@ -78,6 +78,14 @@ class Tenant(Base, TimestampMixin):
     student_limit: Mapped[int] = mapped_column(Integer, default=100)
     active_students: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="active")
+    city: Mapped[Optional[str]] = mapped_column(String(100))
+    address: Mapped[Optional[str]] = mapped_column(Text)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255))
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(30))
+    principal_name: Mapped[Optional[str]] = mapped_column(String(150))
+    logo_url: Mapped[Optional[str]] = mapped_column(String(500))
+    # Soft delete: archived tenants keep their data but are hidden and locked out
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     users: Mapped[list[User]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
@@ -136,6 +144,8 @@ class User(Base, FullTimestampMixin):
     profile_image: Mapped[Optional[str]] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Soft delete: retained for audit trails; is_active=False blocks login
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     tenant: Mapped[Tenant] = relationship(back_populates="users")
@@ -545,6 +555,10 @@ class RiskAssessment(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="SET NULL")
     )
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    assigned_counselor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("counselor_profiles.counselor_id", ondelete="SET NULL")
+    )
+    resolution_note: Mapped[Optional[str]] = mapped_column(Text)
 
     # Relationships
     student: Mapped[StudentProfile] = relationship(back_populates="risk_assessments")
@@ -602,6 +616,10 @@ class WellnessRecord(Base, TimestampMixin):
     anxiety_score: Mapped[Optional[int]] = mapped_column(Integer)
     energy_score: Mapped[Optional[int]] = mapped_column(Integer)
     date_recorded: Mapped[date] = mapped_column(Date, nullable=False)
+    # Official daily check-in fields (mood_label set == check-in completed that day)
+    mood_label: Mapped[Optional[str]] = mapped_column(String(20))
+    mood_reason: Mapped[Optional[str]] = mapped_column(String(30))
+    reflection: Mapped[Optional[str]] = mapped_column(Text)
 
     # Relationships
     student: Mapped[StudentProfile] = relationship(back_populates="wellness_records")
@@ -730,6 +748,70 @@ class StressDistribution(Base, TimestampMixin):
     student: Mapped[StudentProfile] = relationship(back_populates="stress_distributions")
 
 
+class StudentActivity(Base):
+    """A persisted activity suggestion for one student.
+
+    The weekly set (kind='weekly') is generated once per ISO week; one extra
+    daily pick (kind='daily') is added each day. `activity_id` is the stable
+    slug used to avoid re-suggesting recent activities; `completed_at` makes
+    completion state survive logout.
+    """
+    __tablename__ = "student_activities"
+    __table_args__ = (
+        Index("ix_student_activities_week", "student_id", "week_start"),
+        Index("ix_student_activities_suggested", "student_id", "suggested_on"),
+    )
+
+    student_activity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
+    )
+    activity_id: Mapped[str] = mapped_column(String(60), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(10), nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    suggested_on: Mapped[date] = mapped_column(Date, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WeeklyReport(Base):
+    """Cached role-appropriate weekly AI summary (one per student/audience/ISO week).
+
+    Generated lazily on first request each week; `content` is the structured
+    report payload, `generated_by` records whether the LLM or the deterministic
+    fallback produced it.
+    """
+    __tablename__ = "weekly_reports"
+    __table_args__ = (
+        UniqueConstraint("student_id", "audience", "week_start", name="uq_weekly_report_scope"),
+        Index("ix_weekly_reports_student", "student_id", "week_start"),
+    )
+
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
+    )
+    audience: Mapped[str] = mapped_column(String(20), nullable=False)
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    content: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    generated_by: Mapped[Optional[str]] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 # ===================================================================
 # Parent Insights
 # ===================================================================
@@ -827,6 +909,32 @@ class CounselorAvailability(Base, TimestampMixin):
 
     # Relationships
     counselor: Mapped[CounselorProfile] = relationship(back_populates="availability")
+
+
+class CounselorSchoolAssignment(Base):
+    """Directory listing of a counselor at a school. Informational only —
+    booking remains platform-wide (any student can book any verified counselor)."""
+    __tablename__ = "counselor_school_assignments"
+    __table_args__ = (
+        UniqueConstraint("counselor_id", "tenant_id", name="uq_counselor_tenant"),
+    )
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    counselor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("counselor_profiles.counselor_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False
+    )
+    assigned_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 # ===================================================================
@@ -970,6 +1078,8 @@ class AuditLog(Base, TimestampMixin):
     entity_type: Mapped[Optional[str]] = mapped_column(String(50))
     entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
     ip_address: Mapped[Optional[str]] = mapped_column(String(50))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255))
+    details: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # Relationships
     user: Mapped[Optional[User]] = relationship(back_populates="audit_logs")
