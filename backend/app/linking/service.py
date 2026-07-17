@@ -1,5 +1,5 @@
 """
-MindBridge Linking Service
+Kio Linking Service
 Business logic for parent-student invite code system.
 """
 

@@ -1,1 +1,1 @@
-"""MindBridge Risk Module"""
+"""Kio Risk Module"""

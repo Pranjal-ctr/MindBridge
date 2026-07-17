@@ -1,5 +1,5 @@
 """
-MindBridge Onboarding Tests
+Kio Onboarding Tests
 """
 
 import pytest

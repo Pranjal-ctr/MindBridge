@@ -1,1 +1,1 @@
-"""MindBridge Notifications Module"""
+"""Kio Notifications Module"""

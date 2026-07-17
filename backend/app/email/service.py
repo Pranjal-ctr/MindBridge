@@ -1,5 +1,5 @@
 """
-MindBridge Email Service — provider-agnostic interface (Part 10, future-ready).
+Kio Email Service — provider-agnostic interface (Part 10, future-ready).
 
 Email delivery is NOT implemented yet. Invite codes are shown to the student to
 share manually. This interface exists so a real provider (Resend, SendGrid,

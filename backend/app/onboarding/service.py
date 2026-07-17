@@ -1,5 +1,5 @@
 """
-MindBridge Onboarding Service
+Kio Onboarding Service
 Store and fetch the student first-login questionnaire.
 """
 

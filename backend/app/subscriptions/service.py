@@ -1,5 +1,5 @@
 """
-MindBridge Subscriptions Service
+Kio Subscriptions Service
 """
 
 from __future__ import annotations

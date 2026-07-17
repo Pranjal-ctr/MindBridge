@@ -1,1 +1,1 @@
-"""MindBridge Tests Package"""
+"""Kio Tests Package"""

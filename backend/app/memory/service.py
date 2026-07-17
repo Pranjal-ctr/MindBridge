@@ -1,5 +1,5 @@
 """
-MindBridge Memory Service
+Kio Memory Service
 Business logic for AI-powered student memory system.
 """
 

@@ -96,7 +96,7 @@ export function StudentOnboarding({ onComplete }: { onComplete: () => void }) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-gradient-to-br from-blue-50 via-white to-emerald-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-gradient-to-br from-indigo-50 via-white to-teal-50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl my-8">
         <div className="bg-white rounded-3xl shadow-xl border border-border overflow-hidden">
           {/* Header + progress */}

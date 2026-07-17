@@ -1,5 +1,5 @@
 """
-MindBridge Conversations Router
+Kio Conversations Router
 ChatGPT-style conversation and message endpoints.
 """
 

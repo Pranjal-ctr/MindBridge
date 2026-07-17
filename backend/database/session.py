@@ -1,5 +1,5 @@
 """
-MindBridge Database Session
+Kio Database Session
 Async SQLAlchemy engine and session factory for PostgreSQL.
 """
 

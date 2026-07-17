@@ -1,5 +1,5 @@
 /**
- * MindBridge Protected Route
+ * Kio Protected Route
  * Route guard that checks authentication and optional role requirements.
  */
 

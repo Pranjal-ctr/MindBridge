@@ -1,5 +1,6 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Brain, ArrowLeft, Mail, Lock, User, School, Loader2, AlertCircle, Phone, KeyRound } from 'lucide-react';
+import { ArrowLeft, Mail, Lock, User, School, Loader2, AlertCircle, Phone, KeyRound } from 'lucide-react';
+import { KioLogo } from './KioLogo';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { getDashboardRoute } from '../../lib/protected-route';
@@ -166,7 +167,7 @@ export function LoginSignup() {
     }
   };
 
-  // Self-signup is limited to student/parent; staff accounts are provisioned by MindBridge
+  // Self-signup is limited to student/parent; staff accounts are provisioned by Kio
   const roleOptions = [
     { type: 'student' as const, icon: User, label: 'Student' },
     { type: 'parent' as const, icon: User, label: 'Parent' },
@@ -181,13 +182,12 @@ export function LoginSignup() {
   // Google new-user: collect only mobile + institution code (name/email/photo come from Google)
   if (googleRegToken) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-teal-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl shadow-xl border border-border overflow-hidden">
             <div className="bg-gradient-to-r from-primary to-secondary p-8 text-white">
               <div className="flex items-center gap-3 mb-4">
-                <Brain className="w-10 h-10" />
-                <span className="text-2xl font-bold">MindBridge</span>
+                <KioLogo className="h-10 w-auto" reverse />
               </div>
               <h1 className="text-2xl font-semibold mb-1">Almost there</h1>
               <p className="text-blue-100 text-sm">
@@ -290,7 +290,7 @@ export function LoginSignup() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-teal-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Back to Home */}
         <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition mb-8">
@@ -303,8 +303,7 @@ export function LoginSignup() {
           {/* Header */}
           <div className="bg-gradient-to-r from-primary to-secondary p-8 text-white">
             <div className="flex items-center gap-3 mb-4">
-              <Brain className="w-10 h-10" />
-              <span className="text-2xl font-bold">MindBridge</span>
+              <KioLogo className="h-10 w-auto" reverse />
             </div>
             <h1 className="text-2xl font-semibold mb-2">
               {isSignup ? 'Create Account' : 'Welcome Back'}

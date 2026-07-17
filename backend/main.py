@@ -1,5 +1,5 @@
 """
-MindBridge API — FastAPI Application Entry Point
+Kio API — FastAPI Application Entry Point
 """
 
 from contextlib import asynccontextmanager
@@ -46,7 +46,7 @@ app = FastAPI(
         {"name": "💳 Subscriptions", "description": "Subscription and payment management"},
         {"name": "🔗 Linking", "description": "Parent-student account linking with invite codes"},
         {"name": "🎓 Onboarding", "description": "Student first-login questionnaire"},
-        {"name": "⚙️ Admin", "description": "MindBridge platform administration"},
+        {"name": "⚙️ Admin", "description": "Kio platform administration"},
         {"name": "🏥 Health", "description": "System health checks"},
     ],
 )

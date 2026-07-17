@@ -1,5 +1,5 @@
 """
-MindBridge Wellness Service
+Kio Wellness Service
 """
 
 from __future__ import annotations
@@ -13,6 +13,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wellness.schemas import (
+    DailyCheckinInfo,
+    DailyCheckinRequest,
+    DailyCheckinResponse,
+    DailyCheckinStatusResponse,
     EmotionSummaryResponse,
     EmotionTimelinePoint,
     EmotionTrendPoint,
@@ -21,6 +25,8 @@ from app.wellness.schemas import (
     GoalUpdate,
     JournalEntryCreate,
     JournalEntryResponse,
+    MoodCalendarDay,
+    MoodCalendarResponse,
     MoodCheckinRequest,
     MoodCheckinResponse,
     WellnessRecordCreate,
@@ -400,5 +406,182 @@ async def get_emotion_summary(
                 created_at=s.created_at, emotion=s.current_emotion, intensity=s.intensity
             )
             for s in snapshots[:20]
+        ],
+    )
+
+
+# -------------------------------------------------------------------
+# Mood Check-in (official, per 12-hour window, max 2 submissions)
+# -------------------------------------------------------------------
+
+# 5-level mood scale -> 1-10 mood_score (keeps engine math unchanged).
+# API identifiers are stable; the frontend renders its own display labels.
+DAILY_MOOD_VALUES = {"amazing": 10, "good": 8, "okay": 5, "low": 3, "very_difficult": 1}
+
+# Initial check-in + at most one update per 12-hour window
+MAX_CHECKINS_PER_WINDOW = 2
+
+
+def _current_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """The current 12-hour window in UTC: [00:00, 12:00) or [12:00, 24:00)."""
+    now = now or datetime.now(timezone.utc)
+    if now.hour < 12:
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(hours=12)
+    else:
+        start = now.replace(hour=12, minute=0, second=0, microsecond=0)
+        end = start + timedelta(hours=12)
+    return start, end
+
+
+async def _window_checkins(
+    db: AsyncSession, student_id: uuid.UUID
+) -> tuple[list[WellnessRecord], datetime]:
+    """Official check-ins (mood_label set) in the current window, oldest first."""
+    window_start, window_end = _current_window()
+    records = (await db.execute(
+        select(WellnessRecord).where(
+            WellnessRecord.student_id == student_id,
+            WellnessRecord.mood_label.isnot(None),
+            WellnessRecord.created_at >= window_start,
+        ).order_by(WellnessRecord.created_at.asc())
+    )).scalars().all()
+    return list(records), window_end
+
+
+def _checkin_info(record: WellnessRecord) -> DailyCheckinInfo:
+    return DailyCheckinInfo(
+        date=record.date_recorded,
+        mood=record.mood_label,
+        reason=record.mood_reason or "other",
+        reflection=record.reflection,
+        created_at=record.created_at,
+    )
+
+
+async def get_daily_checkin_status(
+    db: AsyncSession, student_id: uuid.UUID
+) -> DailyCheckinStatusResponse:
+    """Check-in state for the current 12-hour window (latest entry is current)."""
+    records, window_end = await _window_checkins(db, student_id)
+    if not records:
+        return DailyCheckinStatusResponse(
+            completed_today=False,
+            updates_remaining=MAX_CHECKINS_PER_WINDOW,
+            window_ends_at=window_end,
+        )
+    return DailyCheckinStatusResponse(
+        completed_today=True,
+        checkin=_checkin_info(records[-1]),
+        updates_remaining=max(0, MAX_CHECKINS_PER_WINDOW - len(records)),
+        window_ends_at=window_end,
+    )
+
+
+async def submit_daily_checkin(
+    db: AsyncSession, student_id: uuid.UUID, payload: DailyCheckinRequest
+) -> DailyCheckinResponse:
+    """Record an official mood check-in for the current 12-hour window.
+
+    Each submission is stored as its own row (history is kept); the latest one
+    is the current mood. At most 2 per window (initial + one update) -- 409 after.
+    """
+    existing, _window_end = await _window_checkins(db, student_id)
+
+    if len(existing) >= MAX_CHECKINS_PER_WINDOW:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Mood already updated for this session",
+        )
+
+    record = WellnessRecord(
+        student_id=student_id,
+        date_recorded=date.today(),
+        mood_score=DAILY_MOOD_VALUES[payload.mood],
+        mood_label=payload.mood,
+        mood_reason=payload.reason,
+        reflection=payload.reflection or None,
+    )
+    db.add(record)
+    await db.flush()
+    await db.refresh(record)
+
+    is_update = len(existing) > 0
+    db.add(StudentTimeline(
+        student_id=student_id,
+        event_type="daily_checkin",
+        reference_id=record.record_id,
+        event_description=(
+            f"Mood {'update' if is_update else 'check-in'}: {payload.mood} ({payload.reason})"
+        ),
+    ))
+
+    await _recalculate_wellness(db, student_id, "daily_checkin")
+
+    score = (await db.execute(
+        select(WellnessScore)
+        .where(WellnessScore.student_id == student_id)
+        .order_by(WellnessScore.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    streak = await _checkin_streak_days(db, student_id)
+
+    return DailyCheckinResponse(
+        checkin=_checkin_info(record),
+        wellness=_score_response(score, streak),
+        updates_remaining=max(0, MAX_CHECKINS_PER_WINDOW - len(existing) - 1),
+    )
+
+
+# -------------------------------------------------------------------
+# Mood Calendar
+# -------------------------------------------------------------------
+
+async def get_mood_calendar(
+    db: AsyncSession,
+    student_id: uuid.UUID,
+    month: str,
+    include_reason: bool = True,
+) -> MoodCalendarResponse:
+    """One entry per day of the month that has data (official label preferred)."""
+    try:
+        first = datetime.strptime(month, "%Y-%m").date()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="month must be formatted YYYY-MM",
+        )
+    next_month = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+    records = (await db.execute(
+        select(WellnessRecord)
+        .where(
+            WellnessRecord.student_id == student_id,
+            WellnessRecord.date_recorded >= first,
+            WellnessRecord.date_recorded < next_month,
+        )
+        .order_by(WellnessRecord.date_recorded.asc(), WellnessRecord.created_at.asc())
+    )).scalars().all()
+
+    # Latest record per day; a record carrying the official label wins.
+    by_day: dict[date, WellnessRecord] = {}
+    for r in records:
+        current = by_day.get(r.date_recorded)
+        if current is None or r.mood_label is not None or current.mood_label is None:
+            if current is None or current.mood_label is None or r.mood_label is not None:
+                by_day[r.date_recorded] = r
+
+    return MoodCalendarResponse(
+        month=month,
+        days=[
+            MoodCalendarDay(
+                date=day,
+                mood=rec.mood_label,
+                mood_score=rec.mood_score,
+                reason=rec.mood_reason if include_reason else None,
+                note=rec.reflection if include_reason else None,
+            )
+            for day, rec in sorted(by_day.items())
+            if rec.mood_label is not None or rec.mood_score is not None
         ],
     )

@@ -94,6 +94,10 @@ PARENT_INSIGHT_RESPONSE_SCHEMA: dict = {
         },
         "improvements": {"type": "ARRAY", "items": {"type": "STRING"}},
         "concerns": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "family_communication": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "family_activities": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "protective_factors": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "risk_factors": {"type": "ARRAY", "items": {"type": "STRING"}},
     },
     "required": ["summary", "recommendations", "today_insights", "improvements", "concerns"],
 }
@@ -170,6 +174,10 @@ class ParentInsightPayload(BaseModel):
     today_insights: list[TodayInsight] = Field(default_factory=list)
     improvements: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
+    family_communication: list[str] = Field(default_factory=list)
+    family_activities: list[str] = Field(default_factory=list)
+    protective_factors: list[str] = Field(default_factory=list)
+    risk_factors: list[str] = Field(default_factory=list)
 
 
 class MessageAnalysis(BaseModel):

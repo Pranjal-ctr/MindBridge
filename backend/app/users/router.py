@@ -1,5 +1,5 @@
 """
-MindBridge Users Router
+Kio Users Router
 User profile management endpoints.
 """
 

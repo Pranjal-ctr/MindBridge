@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { Brain, Users, TrendingUp, AlertTriangle, Calendar, BarChart3, Menu, X } from 'lucide-react';
+import { Users, TrendingUp, AlertTriangle, Calendar, BarChart3, Menu, X } from 'lucide-react';
+import { KioLogo } from './KioLogo';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar } from 'recharts';
 import { useState } from 'react';
 
@@ -36,8 +37,7 @@ export function SchoolAdminDashboard() {
           <div className="p-4 border-b border-sidebar-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Brain className="w-6 h-6 text-primary" />
-                <span className="font-semibold">MindBridge</span>
+                <KioLogo className="h-7 w-auto" />
               </div>
               <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
                 <X className="w-5 h-5" />

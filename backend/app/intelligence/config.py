@@ -31,6 +31,10 @@ DEFAULTS: dict[str, dict] = {
         "journal_consistency": 0.05,
         "counselor_engagement": 0.05,
         "improvement_delta": 0.05,
+        # Added July 2026 -- shallow merge in load_config surfaces these even
+        # when an older DB row predates them (weighted mean renormalizes).
+        "activity_completion": 0.05,
+        "mood_recovery": 0.05,
     },
     "risk_level_bands": {"yellow": 40, "red": 65, "critical": 85},
     "crisis": {

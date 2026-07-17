@@ -1,5 +1,5 @@
 /**
- * MindBridge Student Growth Profile
+ * Kio Student Growth Profile
  * Displays AI-extracted memories organized by category.
  * Students can view, pin, and delete their memories.
  */

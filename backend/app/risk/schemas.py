@@ -1,5 +1,5 @@
 """
-MindBridge Risk Schemas
+Kio Risk Schemas
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-MindBridge Auth Schemas
+Kio Auth Schemas
 Pydantic v2 models for authentication requests and responses.
 """
 

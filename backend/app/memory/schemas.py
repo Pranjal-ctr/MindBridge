@@ -1,5 +1,5 @@
 """
-MindBridge Memory Schemas
+Kio Memory Schemas
 """
 
 from __future__ import annotations

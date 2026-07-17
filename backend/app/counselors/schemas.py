@@ -1,5 +1,5 @@
 """
-MindBridge Counselors Schemas
+Kio Counselors Schemas
 """
 
 from __future__ import annotations

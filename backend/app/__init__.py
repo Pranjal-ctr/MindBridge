@@ -1,1 +1,1 @@
-"""MindBridge App Package"""
+"""Kio App Package"""

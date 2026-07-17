@@ -1,5 +1,5 @@
 """
-MindBridge Conversations Tests
+Kio Conversations Tests
 """
 
 import pytest

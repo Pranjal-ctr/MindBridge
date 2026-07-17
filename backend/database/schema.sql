@@ -1,5 +1,5 @@
 -- ===================================================================
--- MindBridge PostgreSQL Schema
+-- Kio PostgreSQL Schema
 -- Generated from DBML with production-ready constraints & indexes
 -- ===================================================================
 

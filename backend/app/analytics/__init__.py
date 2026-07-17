@@ -1,1 +1,1 @@
-"""MindBridge Analytics Module"""
+"""Kio Analytics Module"""

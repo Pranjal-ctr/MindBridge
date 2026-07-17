@@ -1,5 +1,5 @@
 /**
- * MindBridge Auth Context
+ * Kio Auth Context
  * Provides authentication state management across the entire app.
  */
 

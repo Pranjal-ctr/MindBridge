@@ -1,1 +1,1 @@
-"""MindBridge Parents Module"""
+"""Kio Parents Module"""

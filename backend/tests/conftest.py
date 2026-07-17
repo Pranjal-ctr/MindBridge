@@ -1,5 +1,5 @@
 """
-MindBridge Test Configuration
+Kio Test Configuration
 Shared fixtures for all test modules.
 
 Tests run against an isolated database (TEST_DATABASE_URL env var, or the

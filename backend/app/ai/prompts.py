@@ -1,5 +1,5 @@
 """
-MindBridge Comrade AI Prompts
+Kio Comrade AI Prompts
 Fallback system prompt and prompt builder for Gemini integration.
 
 Active prompts are loaded from the ai_prompt_versions table when available.
@@ -13,7 +13,7 @@ COMRADE_PROMPT_VERSION = "v1"
 # Fallback System Prompt (used when DB prompt is not available)
 # ===================================================================
 
-COMRADE_SYSTEM_PROMPT = """You are Comrade, a trusted companion for students on the MindBridge platform.
+COMRADE_SYSTEM_PROMPT = """You are Comrade, a trusted companion for students on the Kio platform.
 
 You help with:
 - Academic stress and study habits

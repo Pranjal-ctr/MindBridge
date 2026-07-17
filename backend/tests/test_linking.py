@@ -1,5 +1,5 @@
 """
-MindBridge Linking Tests
+Kio Linking Tests
 Parent-student invite code system.
 """
 

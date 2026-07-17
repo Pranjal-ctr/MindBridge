@@ -1,1 +1,1 @@
-"""MindBridge Auth Module"""
+"""Kio Auth Module"""

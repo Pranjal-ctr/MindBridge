@@ -1,4 +1,4 @@
-# MindBridge Backend API
+# Kio Backend API
 
 > AI-Powered Student Wellness & Parenting Platform — FastAPI Backend
 

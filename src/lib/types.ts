@@ -1,5 +1,5 @@
 /**
- * MindBridge TypeScript Types
+ * Kio TypeScript Types
  * Mirrors backend Pydantic schemas for type-safe API communication.
  */
 
@@ -300,6 +300,144 @@ export interface ChildInsightResponse {
   improvements: string[];
   concerns: string[];
   weekly_progress: Record<string, number>;
+  family_communication: string[];
+  family_activities: string[];
+  weekly_mood_summary: WeeklyMoodSummary | null;
+  wellbeing_dimensions: WellbeingDimension[];
+  protective_factors: string[];
+  risk_factors: string[];
+}
+
+export interface WeeklyMoodSummary {
+  headline: string;
+  dominant_mood: string | null;
+  low_days: number;
+  trend: string;
+  days_recorded: number;
+}
+
+export interface WellbeingDimension {
+  dimension: string;
+  value: number;
+}
+
+// ── Daily Check-in (official, once per calendar day) ─────────────────
+
+export type DailyMood = 'amazing' | 'good' | 'okay' | 'low' | 'very_difficult';
+export type CheckinReason =
+  | 'academics' | 'family' | 'friends' | 'relationship' | 'health'
+  | 'career' | 'sports' | 'financial' | 'social_media' | 'other';
+
+export interface DailyCheckinRequest {
+  mood: DailyMood;
+  reason: CheckinReason;
+  reflection?: string | null;
+}
+
+export interface DailyCheckinInfo {
+  date: string;
+  mood: DailyMood;
+  reason: CheckinReason;
+  reflection: string | null;
+  created_at: string | null;
+}
+
+export interface DailyCheckinStatusResponse {
+  /** True when a check-in exists in the current 12-hour window. */
+  completed_today: boolean;
+  checkin: DailyCheckinInfo | null;
+  /** 2 = none yet, 1 = one update still allowed, 0 = window exhausted. */
+  updates_remaining: number;
+  window_ends_at: string | null;
+}
+
+export interface DailyCheckinResponse {
+  checkin: DailyCheckinInfo;
+  wellness: WellnessScoreResponse;
+  updates_remaining: number;
+}
+
+// ── Mood Calendar ─────────────────────────────────────────────────────
+
+export interface MoodCalendarDay {
+  date: string;
+  mood: DailyMood | null;
+  mood_score: number | null;
+  reason: CheckinReason | null;
+  note: string | null;
+}
+
+export interface MoodCalendarResponse {
+  month: string;
+  days: MoodCalendarDay[];
+}
+
+// ── Personal Insights ─────────────────────────────────────────────────
+
+export interface PersonalInsight {
+  kind: string;
+  title: string;
+  body: string;
+  evidence: string;
+}
+
+export interface PersonalInsightsResponse {
+  insights: PersonalInsight[];
+  sufficient_data: boolean;
+  checkin_days: number;
+}
+
+// ── Activities ────────────────────────────────────────────────────────
+
+export interface ActivityItem {
+  activity_id: string;
+  title: string;
+  description: string;
+  category: 'mindfulness' | 'physical' | 'social' | 'reflection' | 'rest' | 'creative';
+  duration_minutes: number;
+  reason: string;
+  completed: boolean;
+  is_daily: boolean;
+}
+
+export interface ActivitiesResponse {
+  activities: ActivityItem[];
+  personalized: boolean;
+  generated_at: string;
+}
+
+// ── Counselor Students ────────────────────────────────────────────────
+
+export interface CounselorStudentProfile {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  age: number | null;
+  gender: string | null;
+  risk_level: string;
+  wellness_score: number | null;
+  main_concerns: string[];
+  emotional_trend: string;
+  last_session: string | null;
+  ai_summary: string | null;
+}
+
+export interface CounselorStudentListResponse {
+  students: CounselorStudentProfile[];
+  total: number;
+}
+
+// ── Weekly Report ─────────────────────────────────────────────────────
+
+export interface WeeklyReportResponse {
+  audience: 'student' | 'parent' | 'counselor';
+  week_start: string;
+  headline: string;
+  summary: string;
+  highlights: string[];
+  focus_areas: string[];
+  generated_by: string | null;
+  created_at: string;
 }
 
 // ── Wellness Score & Emotions ─────────────────────────────────────────

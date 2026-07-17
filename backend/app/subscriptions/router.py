@@ -1,5 +1,5 @@
 """
-MindBridge Subscriptions Router
+Kio Subscriptions Router
 """
 
 from __future__ import annotations

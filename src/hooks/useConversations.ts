@@ -1,5 +1,5 @@
 /**
- * MindBridge Conversations Hook
+ * Kio Conversations Hook
  * Manages conversation list, active conversation, and message sending.
  */
 

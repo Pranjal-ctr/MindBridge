@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Brain, Shield, Users, TrendingUp, MessageSquare, Heart, Lock, BarChart3, Calendar, ChevronRight, Check, Menu, X } from 'lucide-react';
+import { KioLogo } from './KioLogo';
 import { useState } from 'react';
 
 export function LandingPage() {
@@ -12,8 +13,7 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
-              <Brain className="w-8 h-8 text-primary" />
-              <span className="text-xl font-semibold text-foreground">MindBridge</span>
+              <KioLogo className="h-8 w-auto" />
             </div>
 
             <nav className="hidden md:flex items-center gap-8">
@@ -52,7 +52,7 @@ export function LandingPage() {
       </header>
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-emerald-50 py-20 md:py-32">
+      <section className="relative overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-teal-50 py-20 md:py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
@@ -213,7 +213,7 @@ export function LandingPage() {
               <h2 className="text-3xl font-bold">Our Privacy Promise</h2>
             </div>
             <p className="text-xl mb-8 text-blue-100">
-              We believe trust is the foundation of effective mental health support. That's why we built MindBridge with privacy at its core.
+              We believe trust is the foundation of effective mental health support. That's why we built Kio with privacy at its core.
             </p>
             <div className="grid md:grid-cols-2 gap-6">
               {[
@@ -235,7 +235,7 @@ export function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section id="pricing" className="py-20 bg-gradient-to-br from-gray-50 to-emerald-50">
+      <section id="pricing" className="py-20 bg-gradient-to-br from-gray-50 to-teal-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">Pricing</h2>
@@ -246,7 +246,7 @@ export function LandingPage() {
             {[
               {
                 name: "Individual",
-                price: "$19",
+                price: "INR 199",
                 period: "per student/month",
                 description: "Perfect for families",
                 features: [
@@ -261,7 +261,7 @@ export function LandingPage() {
               },
               {
                 name: "School",
-                price: "$12",
+                price: "custom",
                 period: "per student/month",
                 description: "For educational institutions",
                 features: [
@@ -282,11 +282,9 @@ export function LandingPage() {
                 description: "For large organizations",
                 features: [
                   "Everything in School",
-                  "White-label options",
                   "Advanced analytics",
-                  "Custom AI training",
-                  "SLA guarantees",
-                  "On-premise deployment"
+                  "Custom AI training/ Workshops"
+                  
                 ],
                 cta: "Contact Sales",
                 featured: false
@@ -337,7 +335,7 @@ export function LandingPage() {
             Ready to Support Your Students?
           </h2>
           <p className="text-xl text-blue-100 mb-8">
-            Join hundreds of schools and thousands of families using MindBridge for student wellness.
+            Join hundreds of schools and thousands of families using Kio for student wellness.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link to="/login" className="px-8 py-4 bg-white text-primary rounded-xl font-medium hover:bg-blue-50 transition shadow-lg">
@@ -356,8 +354,7 @@ export function LandingPage() {
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <Brain className="w-6 h-6 text-primary" />
-                <span className="font-semibold text-white">MindBridge</span>
+                <KioLogo className="h-7 w-auto" reverse />
               </div>
               <p className="text-sm text-gray-400">
                 AI-powered student wellness and parenting guidance platform.
@@ -392,7 +389,7 @@ export function LandingPage() {
             </div>
           </div>
           <div className="border-t border-gray-800 pt-8 text-sm text-gray-400 text-center">
-            <p>&copy; 2026 MindBridge. All rights reserved. HIPAA, FERPA, and COPPA compliant.</p>
+            <p>&copy; 2026 Kio. All rights reserved. HIPAA, FERPA, and COPPA compliant.</p>
           </div>
         </div>
       </footer>

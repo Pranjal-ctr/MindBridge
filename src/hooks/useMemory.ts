@@ -1,5 +1,5 @@
 /**
- * MindBridge Memory Hook
+ * Kio Memory Hook
  * Manages student memory items (Growth Profile).
  */
 

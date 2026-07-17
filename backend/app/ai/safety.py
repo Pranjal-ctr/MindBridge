@@ -1,5 +1,5 @@
 """
-MindBridge AI Safety Module
+Kio AI Safety Module
 Detects safety-related keywords in messages, logs audit events, and raises an
 instant provisional risk alert (keyword tripwire) for the most severe
 categories.

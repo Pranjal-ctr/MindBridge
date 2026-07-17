@@ -6,7 +6,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Brain,
   ArrowLeft,
   Copy,
   Check,
@@ -24,6 +23,7 @@ import {
   Pencil,
   X,
 } from 'lucide-react';
+import { KioLogo } from './KioLogo';
 import api from '../../lib/api';
 import type {
   InviteCodeResponse,
@@ -147,7 +147,7 @@ export function StudentInviteCode() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-teal-50">
       {/* Header */}
       <header className="border-b border-border bg-white/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
@@ -161,8 +161,7 @@ export function StudentInviteCode() {
             </Link>
           </div>
           <div className="flex items-center gap-2">
-            <Brain className="w-6 h-6 text-primary" />
-            <span className="font-semibold">MindBridge</span>
+            <KioLogo className="h-7 w-auto" />
           </div>
         </div>
       </header>

@@ -1,5 +1,5 @@
 """
-MindBridge Analytics Schemas
+Kio Analytics Schemas
 """
 
 from __future__ import annotations

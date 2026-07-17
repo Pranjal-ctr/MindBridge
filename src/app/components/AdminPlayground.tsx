@@ -1,5 +1,5 @@
 /**
- * MindBridge AI Playground (internal, platform admin only)
+ * Kio AI Playground (internal, platform admin only)
  * Test model + prompt-version combinations side by side before
  * activating a prompt globally.
  */
@@ -132,7 +132,7 @@ export function AdminPlayground() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-teal-50 p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">

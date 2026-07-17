@@ -1,5 +1,5 @@
 """
-MindBridge Wellness Router
+Kio Wellness Router
 """
 
 from __future__ import annotations
@@ -14,6 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.conversations.service import get_student_id_for_user
 from app.dependencies import CurrentUser
 from app.wellness.schemas import (
+    ActivitiesResponse,
+    ActivityCompleteRequest,
+    DailyCheckinRequest,
+    DailyCheckinResponse,
+    DailyCheckinStatusResponse,
     EmotionSummaryResponse,
     GoalCreate,
     GoalListResponse,
@@ -22,30 +27,131 @@ from app.wellness.schemas import (
     JournalEntryCreate,
     JournalEntryResponse,
     JournalListResponse,
+    MoodCalendarResponse,
     MoodCheckinRequest,
     MoodCheckinResponse,
+    PersonalInsightsResponse,
+    WeeklyReportResponse,
     WellnessListResponse,
     WellnessRecordCreate,
     WellnessRecordResponse,
     WellnessScoreHistoryResponse,
     WellnessScoreResponse,
+    weekly_report_response,
 )
 from app.wellness.service import (
     create_goal,
     create_journal_entry,
     create_wellness_record,
+    get_daily_checkin_status,
     get_emotion_summary,
+    get_mood_calendar,
     get_wellness_score,
     get_wellness_score_history,
     list_goals,
     list_journal_entries,
     list_wellness_records,
     log_mood_checkin,
+    submit_daily_checkin,
     update_goal,
 )
 from database.session import get_db
 
 router = APIRouter()
+
+
+# -------------------------------------------------------------------
+# Daily Check-in (official, once per calendar day)
+# -------------------------------------------------------------------
+
+@router.get("/checkin/today", response_model=DailyCheckinStatusResponse)
+async def checkin_status(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Check-in state for the current 12-hour window (gates the dashboard)."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await get_daily_checkin_status(db, student_id)
+
+
+@router.post("/checkin", response_model=DailyCheckinResponse, status_code=201)
+async def daily_checkin(
+    payload: DailyCheckinRequest,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Submit an official mood check-in (mood + reason, optional reflection).
+
+    Max 2 per 12-hour window (initial + one update) -- 409 after that.
+    """
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await submit_daily_checkin(db, student_id, payload)
+
+
+@router.get("/mood-calendar", response_model=MoodCalendarResponse)
+async def mood_calendar(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+):
+    """Per-day mood entries for a month (official check-in labels preferred)."""
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await get_mood_calendar(db, student_id, month)
+
+
+# -------------------------------------------------------------------
+# Personal Insights, Activities & Weekly Report (intelligence layer)
+# -------------------------------------------------------------------
+
+@router.get("/insights", response_model=PersonalInsightsResponse)
+async def personal_insights(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Pattern-mined personal observations; empty until enough history exists."""
+    from app.intelligence.personal_insights import mine_personal_insights
+
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await mine_personal_insights(db, student_id)
+
+
+@router.get("/activities", response_model=ActivitiesResponse)
+async def personalized_activities(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Personalized activity suggestions (AI-tailored, signal-based fallback)."""
+    from app.intelligence.activities import get_personalized_activities
+
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    return await get_personalized_activities(db, student_id)
+
+
+@router.post("/activities/complete", status_code=201)
+async def complete_activity(
+    payload: ActivityCompleteRequest,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Persist an activity completion (409 if already completed)."""
+    from app.intelligence.activities import complete_activity as complete
+
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    await complete(db, student_id, payload.activity_id, payload.title)
+    return {"status": "logged"}
+
+
+@router.get("/weekly-report", response_model=WeeklyReportResponse)
+async def student_weekly_report(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """This week's AI summary written for the student (cached per ISO week)."""
+    from app.intelligence.reports import get_weekly_report
+
+    student_id = await get_student_id_for_user(db, current_user.user_id)
+    report = await get_weekly_report(db, student_id, "student")
+    return weekly_report_response(report)
 
 
 # -------------------------------------------------------------------

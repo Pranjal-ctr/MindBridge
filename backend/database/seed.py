@@ -1,5 +1,5 @@
 """
-MindBridge Database Seed Script
+Kio Database Seed Script
 Creates demo data matching the frontend's hardcoded values.
 
 Usage:
@@ -48,7 +48,7 @@ async def seed():
             print("Database already seeded. Skipping.")
             return
 
-        print("[SEED] Seeding MindBridge database...")
+        print("[SEED] Seeding Kio database...")
 
         # ---------------------------------------------------------------
         # 1. Tenant: Riverside High School
@@ -186,7 +186,7 @@ async def seed():
             user_id=platform_admin_id, tenant_id=tenant_id,
             email="admin@mindbridge.ai",
             password_hash=default_password, role="admin",
-            first_name="MindBridge", last_name="Admin",
+            first_name="Kio", last_name="Admin",
         ))
 
         await db.flush()

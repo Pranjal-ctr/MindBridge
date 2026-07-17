@@ -1,5 +1,5 @@
 /**
- * MindBridge API Client
+ * Kio API Client
  * Centralized Axios instance with JWT interceptors, token refresh, and 401 handling.
  */
 

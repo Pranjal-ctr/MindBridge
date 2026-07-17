@@ -1,5 +1,5 @@
 """
-MindBridge Notifications Router
+Kio Notifications Router
 """
 
 from __future__ import annotations

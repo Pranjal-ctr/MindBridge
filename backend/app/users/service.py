@@ -1,5 +1,5 @@
 """
-MindBridge Users Service
+Kio Users Service
 Business logic for user profile retrieval and updates.
 """
 

@@ -1,5 +1,5 @@
 """
-MindBridge Database Enums
+Kio Database Enums
 Python enum definitions matching PostgreSQL CHECK constraints.
 """
 

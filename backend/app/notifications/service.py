@@ -1,5 +1,5 @@
 """
-MindBridge Notifications Service
+Kio Notifications Service
 """
 
 from __future__ import annotations

@@ -1,12 +1,47 @@
 """
 Deterministic wellness engine -- zero LLM calls.
 
-Computes an explainable 0-100 score from stored signals using configurable
-weights (platform_config.wellness_weights). Components without data are
-dropped and the remaining weights renormalized; confidence is the share of
-total weight that had data. Every run appends a wellness_scores row with the
-full component breakdown and a templated explanation, and syncs
-StudentProfile.wellness_score for backward compatibility.
+THE FORMULA
+===========
+The overall score is a weighted mean of normalized (0-100) component signals,
+renormalized over the components that actually have data:
+
+    overall = sum(normalized_c * weight_c) / sum(weight_c)   for components with data
+
+Weights come from platform_config.wellness_weights (DB-first, code fallback in
+app/intelligence/config.py). Components and how each is normalized:
+
+  checkin_engagement    check-in days (x12) + chat messages (x2, capped 20), last 7d
+  mood_level            mean of mood/energy/confidence check-in values, 1-10 -> 0-100
+  mood_stability        14-day mood standard deviation, inverted (steady = high)
+  conversation_sentiment  AI-labeled message sentiment, last 7d
+                          (positive=100, neutral=60, mixed=45, negative=20)
+  stress_trend          mean stress/anxiety this week inverted, +5/point week-over-week
+                        improvement bonus
+  risk_signal           latest AI risk score, inverted (100 - risk)
+  goal_progress         last 10 goals, status-weighted
+                        (completed=100, active=60, paused=40, abandoned=10)
+  journal_consistency   entries this week / 4, capped (never journaling = no penalty)
+  counselor_engagement  completed session=100, scheduled=70, missed=30 (none = no penalty)
+  activity_completion   suggested activities completed, last 7d (n/3 capped;
+                        none completed = no penalty)
+  mood_recovery         share of low-mood days (<=3) followed by a >=+3 rebound
+                        within 3 days (no low days = not applicable)
+  improvement_delta     provisional score vs. mean of last 3 stored scores,
+                        centered at 50 (+/-2 per point of change)
+
+SMOOTHING
+=========
+Two mechanisms keep the score from jumping around:
+1. improvement_delta blends recent momentum into the weighted mean.
+2. A final clamp limits any single recalculation to +/-MAX_STEP points from
+   the previously stored score, so the trajectory always moves in visible,
+   believable steps.
+
+Components without data are dropped and the remaining weights renormalized;
+confidence is the share of total weight that had data. Every run appends a
+wellness_scores row with the full component breakdown and a templated
+explanation, and syncs StudentProfile.wellness_score for backward compatibility.
 """
 
 from __future__ import annotations
@@ -27,6 +62,7 @@ from database.models import (
     JournalEntry,
     Message,
     RiskAssessment,
+    StudentActivity,
     StudentProfile,
     WellnessRecord,
     WellnessScore,
@@ -45,6 +81,8 @@ COMPONENT_LABELS = {
     "goal_progress": "goal progress",
     "journal_consistency": "journaling",
     "counselor_engagement": "counselor engagement",
+    "activity_completion": "activity completion",
+    "mood_recovery": "bounce-back after hard days",
     "improvement_delta": "recent momentum",
 }
 
@@ -52,6 +90,7 @@ SENTIMENT_VALUES = {"positive": 100, "neutral": 60, "mixed": 45, "negative": 20}
 GOAL_STATUS_VALUES = {"completed": 100, "active": 60, "paused": 40, "abandoned": 10}
 
 TREND_BAND = 3.0  # points either side counts as "stable"
+MAX_STEP = 15.0   # largest allowed move per recalculation (smoothing clamp)
 
 
 def _clamp(value: float) -> float:
@@ -245,6 +284,52 @@ async def _component_signals(
     else:
         signals["counselor_engagement"] = None
 
+    # --- activity completion (last 7 days; none completed = not penalized) ---
+    activities_completed_7d = (await db.execute(
+        select(func.count()).select_from(StudentActivity).where(
+            StudentActivity.student_id == student_id,
+            StudentActivity.completed_at.isnot(None),
+            StudentActivity.completed_at >= week_ago,
+        )
+    )).scalar() or 0
+    if activities_completed_7d > 0:
+        signals["activity_completion"] = (
+            min(activities_completed_7d / 3, 1) * 100,
+            f"{activities_completed_7d} wellbeing activit(ies) completed this week",
+        )
+    else:
+        signals["activity_completion"] = None
+
+    # --- mood recovery: rebound after low-mood days (last 14 days) ---
+    daily_mood: dict[date, int] = {}
+    for r in sorted(
+        (await db.execute(
+            select(WellnessRecord).where(
+                WellnessRecord.student_id == student_id,
+                WellnessRecord.date_recorded >= today - timedelta(days=14),
+                WellnessRecord.mood_score.isnot(None),
+            )
+        )).scalars().all(),
+        key=lambda r: (r.date_recorded, r.created_at),
+    ):
+        daily_mood[r.date_recorded] = r.mood_score
+    low_days = [d for d, mood in daily_mood.items() if mood <= 3]
+    if low_days:
+        recovered = sum(
+            1 for low_day in low_days
+            if any(
+                daily_mood.get(low_day + timedelta(days=offset), 0)
+                >= daily_mood[low_day] + 3
+                for offset in (1, 2, 3)
+            )
+        )
+        signals["mood_recovery"] = (
+            recovered / len(low_days) * 100,
+            f"bounced back after {recovered} of {len(low_days)} hard day(s)",
+        )
+    else:
+        signals["mood_recovery"] = None  # nothing to recover from
+
     return signals
 
 
@@ -291,6 +376,12 @@ async def compute_wellness_score(
 
     overall = _weighted(present)
     confidence = min(sum(weights.get(name, 0) for name in present), 1.0)
+
+    # --- smoothing clamp: no single recalc moves the score more than MAX_STEP ---
+    if prior_scores:
+        previous = float(prior_scores[0].overall_score)
+        if abs(overall - previous) > MAX_STEP:
+            overall = previous + (MAX_STEP if overall > previous else -MAX_STEP)
 
     # --- trend vs the score ~7 days ago ---
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)

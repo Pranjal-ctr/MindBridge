@@ -1,1 +1,1 @@
-"""MindBridge Memory Module"""
+"""Kio Memory Module"""

@@ -1,5 +1,5 @@
 """
-MindBridge Platform Counselor & Booking Tests
+Kio Platform Counselor & Booking Tests
 """
 
 import uuid
@@ -22,7 +22,7 @@ from database.models import (
 async def platform_counselor(db_session):
     """A verified, available counselor in a *different* tenant than the student."""
     tenant = Tenant(
-        tenant_id=uuid.uuid4(), tenant_name="MindBridge Platform",
+        tenant_id=uuid.uuid4(), tenant_name="Kio Platform",
         tenant_type="organization", school_code=f"PLAT{uuid.uuid4().hex[:5].upper()}",
         status="active",
     )

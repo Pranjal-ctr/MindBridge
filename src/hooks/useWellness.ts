@@ -1,5 +1,5 @@
 /**
- * MindBridge Wellness Hook
+ * Kio Wellness Hook
  * Student's computed wellness score + one-tap mood check-in.
  */
 

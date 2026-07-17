@@ -1,6 +1,6 @@
-# MindBridge
+# Kio
 
-MindBridge is a mental wellness platform built for schools. Students get a private AI companion to talk to, parents get a summary of how their kid is doing (never the actual conversations), counselors get a queue of students who might need attention, and school admins get anonymized, school-wide analytics.
+Kio is a mental wellness platform built for schools. Students get a private AI companion to talk to, parents get a summary of how their kid is doing (never the actual conversations), counselors get a queue of students who might need attention, and school admins get anonymized, school-wide analytics.
 
 It's a full-stack app: a React/TypeScript frontend and a FastAPI/PostgreSQL backend, with an AI layer built around Google Gemini that's designed to swap providers without touching the rest of the codebase.
 
@@ -40,7 +40,7 @@ It's a full-stack app: a React/TypeScript frontend and a FastAPI/PostgreSQL back
 ## Project layout
 
 ```
-MindBridge/
+Kio/
 ├── src/                          # Frontend
 │   ├── app/
 │   │   ├── App.tsx               # Routes
@@ -101,7 +101,7 @@ You'll need Node 18+, Python 3.11+, PostgreSQL 15+, and a Gemini API key ([free 
 
 ```bash
 git clone <repository-url>
-cd MindBridge
+cd Kio
 npm install
 ```
 

@@ -1,5 +1,5 @@
 """
-MindBridge Risk Service
+Kio Risk Service
 """
 
 from __future__ import annotations

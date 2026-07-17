@@ -1,5 +1,5 @@
 """
-MindBridge Auth Utilities
+Kio Auth Utilities
 JWT token creation/verification and password hashing.
 """
 

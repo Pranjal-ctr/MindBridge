@@ -1,5 +1,5 @@
 """
-MindBridge Application Configuration
+Kio Application Configuration
 Centralized settings via pydantic-settings with .env support.
 """
 
@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------
     # Application
     # -------------------------------------------------------------------
-    APP_NAME: str = "MindBridge API"
+    APP_NAME: str = "Kio API"
     APP_VERSION: str = "1.0.0"
-    APP_DESCRIPTION: str = "AI-Powered Student Wellness & Parenting Platform"
+    APP_DESCRIPTION: str = "Kio — AI Companion for Growth. Student wellness & parenting guidance platform."
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
 

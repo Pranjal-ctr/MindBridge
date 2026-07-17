@@ -1,5 +1,5 @@
 """
-MindBridge Onboarding Router
+Kio Onboarding Router
 Student first-login questionnaire endpoints.
 """
 

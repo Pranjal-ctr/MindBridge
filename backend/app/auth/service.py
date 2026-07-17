@@ -1,5 +1,5 @@
 """
-MindBridge Auth Service
+Kio Auth Service
 Business logic for registration, login, and token management.
 """
 

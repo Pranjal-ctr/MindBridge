@@ -1,5 +1,5 @@
 """
-MindBridge Conversations Service
+Kio Conversations Service
 Business logic for ChatGPT-style conversation management.
 """
 

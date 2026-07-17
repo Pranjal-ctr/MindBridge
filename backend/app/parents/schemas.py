@@ -1,5 +1,5 @@
 """
-MindBridge Parents Schemas
+Kio Parents Schemas
 """
 
 from __future__ import annotations
@@ -67,6 +67,22 @@ class TodayInsightCard(BaseModel):
     body: str
 
 
+class WeeklyMoodSummary(BaseModel):
+    """Aggregated view of the child's week -- replaces the per-day mood calendar
+    on the parent dashboard (daily mood icons stay private to the student)."""
+    headline: str            # e.g. "Mostly Happy"
+    dominant_mood: str | None = None  # amazing|good|okay|low|very_difficult
+    low_days: int = 0
+    trend: str = "stable"    # improving | stable | declining
+    days_recorded: int = 0
+
+
+class WellbeingDimension(BaseModel):
+    """One 0-100 wellbeing dimension for the radar chart, from real signals."""
+    dimension: str
+    value: int
+
+
 class ChildInsightResponse(BaseModel):
     """Aggregated insights for a parent's child."""
     student_id: uuid.UUID
@@ -87,6 +103,12 @@ class ChildInsightResponse(BaseModel):
     improvements: list[str] = []
     concerns: list[str] = []
     weekly_progress: dict = {}
+    family_communication: list[str] = []
+    family_activities: list[str] = []
+    weekly_mood_summary: WeeklyMoodSummary | None = None
+    wellbeing_dimensions: list[WellbeingDimension] = []
+    protective_factors: list[str] = []
+    risk_factors: list[str] = []
 
 
 class RecommendationResponse(BaseModel):

@@ -1,5 +1,5 @@
 """
-MindBridge Notifications Schemas
+Kio Notifications Schemas
 """
 
 from __future__ import annotations

@@ -1,1 +1,1 @@
-"""MindBridge Subscriptions Module"""
+"""Kio Subscriptions Module"""

@@ -1,5 +1,5 @@
 """
-MindBridge Onboarding Schemas
+Kio Onboarding Schemas
 Student first-login questionnaire (max 5 questions).
 """
 

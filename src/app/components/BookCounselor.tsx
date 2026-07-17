@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { Brain, ArrowLeft, Star, Calendar, Check, Loader2, Globe, GraduationCap, Award, Clock } from 'lucide-react';
+import { ArrowLeft, Star, Calendar, Check, Loader2, Globe, GraduationCap, Award, Clock } from 'lucide-react';
+import { KioLogo } from './KioLogo';
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../lib/api';
 import type {
@@ -67,8 +68,7 @@ export function BookCounselor() {
               </Link>
               <div className="hidden sm:block w-px h-6 bg-border"></div>
               <div className="flex items-center gap-2">
-                <Brain className="w-6 h-6 text-primary" />
-                <span className="font-semibold">MindBridge</span>
+                <KioLogo className="h-7 w-auto" />
               </div>
             </div>
           </div>
@@ -79,7 +79,7 @@ export function BookCounselor() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">Book a Counselor Session</h1>
           <p className="text-muted-foreground">
-            Connect with any licensed MindBridge counselor — available to every student, from every school.
+            Connect with any licensed Kio counselor — available to every student, from every school.
           </p>
         </div>
 

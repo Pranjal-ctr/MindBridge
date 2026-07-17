@@ -1,5 +1,5 @@
 /**
- * MindBridge Child Insights Hook
+ * Kio Child Insights Hook
  * Parent-facing aggregated insights for a linked child.
  *
  * Refresh strategy: a long background interval (5 min) + refetch when the

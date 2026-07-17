@@ -1,5 +1,5 @@
 """
-MindBridge Shared Dependencies
+Kio Shared Dependencies
 FastAPI dependency injection for auth, tenancy, and roles.
 """
 

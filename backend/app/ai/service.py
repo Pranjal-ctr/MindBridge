@@ -1,5 +1,5 @@
 """
-MindBridge Comrade AI Service
+Kio Comrade AI Service
 Core Gemini integration with prompt versioning, metadata tracking,
 safety logging, memory extraction, title generation, and summary hooks.
 """

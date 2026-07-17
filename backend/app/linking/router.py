@@ -1,5 +1,5 @@
 """
-MindBridge Linking Router
+Kio Linking Router
 Endpoints for parent-student invite code system.
 """
 

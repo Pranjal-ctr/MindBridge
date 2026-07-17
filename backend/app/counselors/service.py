@@ -1,5 +1,5 @@
 """
-MindBridge Counselors Service
+Kio Counselors Service
 """
 
 from __future__ import annotations
@@ -241,7 +241,7 @@ async def _open_slots_for(
 async def list_directory(db: AsyncSession) -> CounselorDirectoryResponse:
     """
     List every active, verified, available counselor platform-wide.
-    Counselors belong to the MindBridge platform, not a school -- no tenant filter.
+    Counselors belong to the Kio platform, not a school -- no tenant filter.
     """
     result = await db.execute(
         select(CounselorProfile, User)

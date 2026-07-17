@@ -1,1 +1,1 @@
-# MindBridge Email Module
+# Kio Email Module

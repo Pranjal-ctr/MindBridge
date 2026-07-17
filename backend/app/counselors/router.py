@@ -1,5 +1,5 @@
 """
-MindBridge Counselors Router
+Kio Counselors Router
 """
 
 from __future__ import annotations
@@ -154,6 +154,33 @@ async def get_students(
     counselor_id = await get_counselor_id(db, current_user.user_id)
     students, total = await list_counselor_students(db, counselor_id, tenant_id)
     return StudentListResponse(students=students, total=total)
+
+
+@router.get(
+    "/students/{student_id}/weekly-report",
+    dependencies=[Depends(require_role("counselor", "admin"))],
+)
+async def student_weekly_report(
+    student_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """This week's AI summary written for the counselor (cached per ISO week)."""
+    from fastapi import HTTPException
+
+    from app.intelligence.reports import get_weekly_report
+    from app.wellness.schemas import weekly_report_response
+    from database.models import StudentProfile
+    from sqlalchemy import select
+
+    exists = (await db.execute(
+        select(StudentProfile.student_id).where(StudentProfile.student_id == student_id)
+    )).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    report = await get_weekly_report(db, student_id, "counselor")
+    return weekly_report_response(report)
 
 
 @router.post(

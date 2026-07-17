@@ -1,5 +1,5 @@
 """
-MindBridge Conversations Schemas
+Kio Conversations Schemas
 Pydantic v2 models for conversations and messages.
 """
 

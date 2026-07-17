@@ -1,5 +1,5 @@
 """
-MindBridge Google Auth Tests
+Kio Google Auth Tests
 Google ID-token verification is monkeypatched so no network/creds are needed.
 """
 

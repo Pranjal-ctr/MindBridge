@@ -1,5 +1,5 @@
 """
-MindBridge Auth Router
+Kio Auth Router
 Authentication endpoints: signup, login, refresh, and current user.
 """
 

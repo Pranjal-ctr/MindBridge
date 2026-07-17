@@ -1,5 +1,5 @@
 /**
- * MindBridge Platform Admin Dashboard (super admin)
+ * Kio Platform Admin Dashboard (super admin)
  * School registration, seat/subscription management, staff provisioning,
  * and break-glass access to student chats for severe cases.
  */
@@ -8,7 +8,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
-  Brain,
   Building2,
   FlaskConical,
   Loader2,
@@ -24,6 +23,7 @@ import {
   Check,
   BadgeCheck,
 } from 'lucide-react';
+import { KioLogo } from './KioLogo';
 import api from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
 
@@ -110,14 +110,14 @@ export function PlatformAdminDashboard() {
   const [tab, setTab] = useState<Tab>('analytics');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-teal-50">
       {/* Header */}
       <header className="bg-white border-b border-border px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Brain className="w-8 h-8 text-primary" />
+            <KioLogo className="h-8 w-auto" />
             <div>
-              <h1 className="font-semibold">MindBridge Platform Admin</h1>
+              <h1 className="font-semibold">Platform Admin</h1>
               <p className="text-xs text-muted-foreground">{user?.email}</p>
             </div>
           </div>

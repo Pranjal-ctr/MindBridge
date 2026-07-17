@@ -1,13 +1,13 @@
-# MindBridge SaaS App — Project Context
+# Kio SaaS App — Project Context
 
-> **Last Updated:** July 6, 2026
-> **Status:** Phase 5 Complete -- Google Auth, Onboarding, Guardians, Platform Counselors & Admin
+> **Last Updated:** July 11, 2026
+> **Status:** Phase 5 Complete + Kio Rebrand -- Google Auth, Onboarding, Guardians, Platform Counselors & Admin
 
 ---
 
 ## 📋 Project Overview
 
-**MindBridge** is an AI-driven SaaS platform that supports **student wellness** and **parenting guidance**. It offers personalized insights and resources for emotional health and academic success.
+**Kio** is an AI-driven SaaS platform that supports **student wellness** and **parenting guidance**. It offers personalized insights and resources for emotional health and academic success.
 
 ### Core Value Proposition
 - **Students** get a private, 24/7 AI wellness companion
@@ -88,18 +88,25 @@ Design MindBridge SaaS App/
 
 ---
 
-## 🎨 Design System
+## 🎨 Design System (Kio Brand — see `Rebranding/brand.md`)
 
 ### Colors (CSS Variables in `theme.css`)
-- **Primary:** `#2563EB` (Blue 600)
-- **Secondary:** `#6366f1` (Indigo 500)
-- **Accent:** `#10b981` (Emerald 500)
+- **Primary:** `#232B6D` (Kio Navy)
+- **Secondary:** `#5A6BFF` (Kio Blue — interactive elements, links, charts)
+- **Accent:** `#31D7C2` (Kio Teal — highlights, success, positive indicators)
+- **Background:** `#F8FAFC` / **Text:** `#111827` primary, `#6B7280` secondary
 - **Destructive:** `#ef4444` (Red 500)
 - **Wellness Colors:** Green, Blue, Purple, Pink, Amber
-- Full dark mode support via `.dark` class
+- Brand gradient token: `--brand-gradient` (navy → blue → teal)
+- Full dark mode support via `.dark` class (navy-tinted dark palette)
+
+### Logo
+- Wordmark component: `src/app/components/KioLogo.tsx` (`reverse` prop for dark surfaces)
+- Favicon/app icon: `public/favicon.svg`; source assets in `Rebranding/`
 
 ### Typography
-- **Font:** Inter (Google Fonts)
+- **Headings:** Poppins (Google Fonts) via `--font-heading`
+- **UI/Body:** Inter (Google Fonts) via `--font-sans`
 - **Base size:** 16px
 - **Weights:** 400 (normal), 500 (medium)
 
@@ -125,6 +132,71 @@ npm run build
 
 ## 📝 Change Log
 
+### July 11, 2026 — Phase 7: Production-MVP Polish (12h check-in windows, persistent activities, parent dashboard v4)
+- **Check-in v2**: 12-hour UTC windows (AM/PM); mandatory modal when the window has no
+  check-in; max 2 submissions per window (initial + one update, both stored as rows,
+  latest = current mood, 409 after). 5-point display scale (😄 Very Happy → 😞 Very Low)
+  over the same stable API identifiers. Status endpoint now returns `updates_remaining`,
+  `window_ends_at`, `checkin.created_at` (additive). Chat page shows a Current Mood card
+  (mood + last updated + Update button / "already updated" state) — old 3-mood selector removed.
+- **Persistent activity engine** (migration 012, `student_activities`): weekly set (6, LLM
+  w/ catalog fallback) generated once per ISO week + 1 deterministic daily pick; no repeats
+  within 21 days; completions persist (`Completed ✓`, 409 on double-complete); catalog
+  expanded to ~26 items. Activities feed a new `activity_completion` wellness component.
+- **Wellness engine**: formula fully documented in `app/intelligence/wellness.py` docstring;
+  new components `activity_completion` + `mood_recovery` (config shallow-merge surfaces
+  them over older DB weight rows); ±15-point smoothing clamp per recalc.
+- **Parent insights (additive fields)**: `weekly_mood_summary` (replaces per-day calendar
+  for parents — daily icons stay private to the student), `wellbeing_dimensions` (10 radar
+  dims from real signals), stress factors blended from LLM distribution + check-in reasons +
+  risk categories, `protective_factors`/`risk_factors` from the insight prompt.
+- **Parent dashboard v4**: tabs (Overview / Recommendations / Family Activities); premium
+  summary hero (score, trend, risk, emotional state, period delta); smoothed trend with
+  custom tooltips; weekly mood summary card; large 10-dim radar; dated risk timeline with
+  movement arrows; readable recommendation cards; "Why am I seeing this?" transparency card.
+- **Student**: mood calendar modal (monthly, emoji, own notes) on the dashboard mood card;
+  polished wellness card row; "Complete Today's Check-in" nudge card fallback.
+- Tests: 118 backend + 7 frontend (window rules, persistence, no-repeat, update mode).
+
+### July 11, 2026 — Phase 6 Group G: Wellness Intelligence Engine (check-in, reports, activities)
+- **Mandatory daily check-in**: full-screen non-dismissible modal after login (5-emoji mood +
+  10 reason chips + optional reflection), once per calendar day (`POST /wellness/checkin`
+  409s after; `GET /wellness/checkin/today` gates the dashboard). Stored on `wellness_records`
+  via new nullable columns `mood_label`/`mood_reason`/`reflection` (migration 011). The legacy
+  one-tap `POST /wellness/mood` keeps updating sentiment during the day without touching the
+  official check-in.
+- **Mood calendar**: `GET /wellness/mood-calendar?month=` (student, with reasons) and
+  `GET /parents/children/{id}/mood-calendar` (labels only — reasons/reflections stay private).
+- **Weekly AI reports** (`app/intelligence/reports.py`, feature `weekly_report`): role-appropriate
+  student/parent/counselor versions, cached per ISO week in new `weekly_reports` table,
+  deterministic fallback when no LLM. Endpoints on wellness/parents/counselors routers.
+- **Personalized activities** (`app/intelligence/activities.py`, feature `activities`):
+  LLM-generated from aggregated signals with a deterministic signal-aware catalog fallback;
+  `POST /wellness/activities/complete` logs to the student timeline. New `/student/activities`
+  page (activities + weekly summary + personal insights).
+- **Personal insights** (`app/intelligence/personal_insights.py`): deterministic pattern mining
+  (weekday moods, reason correlations, 14-day trend, persistent stress source, streaks) gated
+  on ≥7 check-in days; `GET /wellness/insights`.
+- **Parent dashboard v3**: AI weekly summary card, 7/30/90-day wellness trend
+  (`GET /parents/children/{id}/wellness-trend?days=`), monthly mood calendar, wellbeing radar
+  (score components), risk timeline strip, expanded "Why this score?" (contribution bars +
+  last-updated + confidence), positive changes / areas needing attention, and LLM-tailored
+  `family_communication` + `family_activities` (added to the parent-insight prompt/payload).
+- **Counselor dashboard**: student roster now live from `GET /counselors/students`; per-student
+  on-demand weekly AI report.
+- Tests: 117 backend (20 new in `test_phase6_wellness.py`) + new vitest setup with 6 frontend
+  tests for the check-in modal (`npm test`).
+
+### July 11, 2026 — MindBridge → Kio Rebrand
+- Product renamed **MindBridge → Kio** across frontend, backend, and docs, using the
+  brand kit in `Rebranding/` (navy `#232B6D`, teal `#31D7C2`, blue `#5A6BFF`; Poppins
+  headings + Inter UI). AI companion remains **Comrade**.
+- New `KioLogo` wordmark component replaces the Brain-icon headers; `public/favicon.svg`
+  + browser title/meta/OG tags added; theme tokens (light + dark) rebuilt on the Kio palette.
+- **Unchanged for backward compatibility:** DB names (`mindbridge`, `mindbridge_test`),
+  seed emails (`admin@mindbridge.ai`) and demo password, localStorage token keys
+  (`mindbridge_*`), invite-code format (`MB-XXXX`), dev JWT secret string, API routes/schema.
+
 ### July 2026 — Phase 4 (Security) & Phase 5 (Auth, Onboarding, Platform)
 **Phase 4 — architecture review + P0/P1 fixes:**
 - Provider-agnostic AI layer (AIProvider / AIProviderFactory / AIRouter, DB-driven routes,
@@ -146,7 +218,7 @@ npm run build
 - **Guardian management** (student-managed on `/student/family`): `student_guardians` table, CRUD,
   one-primary constraint, per-guardian invite code reusing the row-locked redeem flow.
   `EmailService` interface + Noop provider (future Resend/SendGrid/SES/SMTP).
-- **Platform-wide counselors** (migration 008): counselors belong to the MindBridge platform, not a
+- **Platform-wide counselors** (migration 008): counselors belong to the Kio platform, not a
   school. `counselor_availability` slots; `GET /counselors/directory`, `/slots`, `POST /book`
   (row-locked). Any student/parent from any school can book any verified counselor.
 - **Expanded Platform Admin** (migration 009): counselor register/verify/activate, user
@@ -290,7 +362,7 @@ School Code: `RHS2026`
 - Placeholder at message_count >= 20
 - Future: auto-summarize long conversations for context window management
 
----
+---  
 
 ## Next Steps (Planned)
 

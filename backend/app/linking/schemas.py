@@ -1,5 +1,5 @@
 """
-MindBridge Linking Schemas
+Kio Linking Schemas
 Pydantic v2 models for parent-student invite code system.
 """
 

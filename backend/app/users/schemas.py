@@ -1,5 +1,5 @@
 """
-MindBridge Users Schemas
+Kio Users Schemas
 Pydantic v2 models for user profile management.
 """
 

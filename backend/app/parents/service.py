@@ -1,5 +1,5 @@
 """
-MindBridge Parents Service
+Kio Parents Service
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from app.parents.schemas import (
     RiskTrendPoint,
     StressFactor,
     TodayInsightCard,
+    WeeklyMoodSummary,
+    WellbeingDimension,
     WellnessBreakdown,
     WellnessTrendPoint,
 )
@@ -124,6 +126,142 @@ async def _wellness_trend(db: AsyncSession, student_id: uuid.UUID) -> list[Welln
     ]
 
 
+_MOOD_FRIENDLY = {
+    "amazing": "Very Happy", "good": "Happy", "okay": "Neutral",
+    "low": "Sad", "very_difficult": "Very Low",
+}
+
+# Check-in reasons -> stress factor names (positive reasons are skipped)
+_REASON_TO_FACTOR = {
+    "academics": "Academic", "family": "Family", "friends": "Friends",
+    "relationship": "Relationships", "health": "Health", "career": "Career",
+    "financial": "Financial", "social_media": "Screen Time",
+}
+
+# AI risk categories -> stress factor names
+_RISK_TO_FACTOR = {
+    "academic_pressure": "Academic", "family_conflict": "Family",
+    "loneliness": "Loneliness", "bullying": "Bullying", "sleep_issues": "Sleep",
+}
+
+
+def _weekly_mood_summary(records: list[WellnessRecord]) -> WeeklyMoodSummary | None:
+    """Aggregate the last 7 days of mood check-ins (one reading per day, latest wins)."""
+    daily: dict = {}
+    for r in sorted(records, key=lambda r: (r.date_recorded, r.created_at)):
+        if r.mood_score is not None:
+            daily[r.date_recorded] = r
+    if not daily:
+        return None
+
+    days = sorted(daily)
+    scores = [daily[d].mood_score for d in days]
+    labels = [daily[d].mood_label for d in days if daily[d].mood_label]
+
+    dominant = Counter(labels).most_common(1)[0][0] if labels else None
+    low_days = sum(1 for s in scores if s <= 3)
+
+    trend = "stable"
+    if len(scores) >= 4:
+        half = len(scores) // 2
+        delta = sum(scores[half:]) / len(scores[half:]) - sum(scores[:half]) / half
+        trend = "improving" if delta >= 0.75 else ("declining" if delta <= -0.75 else "stable")
+
+    if dominant:
+        headline = f"Mostly {_MOOD_FRIENDLY[dominant]}"
+    else:
+        avg = sum(scores) / len(scores)
+        headline = "A good week overall" if avg >= 6.5 else (
+            "A mixed week" if avg >= 4 else "A tough week"
+        )
+
+    return WeeklyMoodSummary(
+        headline=headline,
+        dominant_mood=dominant,
+        low_days=low_days,
+        trend=trend,
+        days_recorded=len(days),
+    )
+
+
+def _wellbeing_dimensions(
+    components: dict,
+    stress_categories: dict,
+    risk_categories: dict,
+) -> list[WellbeingDimension]:
+    """Preferred radar dimensions, each derived from a real stored signal.
+
+    Only dimensions whose source signal exists are included; values are 0-100
+    where higher is better (stress/risk sources are inverted).
+    """
+    def clamp(v: float) -> int:
+        return int(max(0, min(100, round(v))))
+
+    dims: list[WellbeingDimension] = []
+
+    def from_stress(name: str, category: str):
+        if stress_categories and category in stress_categories:
+            dims.append(WellbeingDimension(
+                dimension=name, value=clamp(100 - float(stress_categories[category]))
+            ))
+
+    def from_component(name: str, component: str):
+        if component in components:
+            dims.append(WellbeingDimension(
+                dimension=name, value=clamp(float(components[component]["normalized"]))
+            ))
+
+    from_stress("Academic", "Academic")
+    from_component("Emotional", "mood_level")
+    from_stress("Social", "Friends")
+    from_stress("Family", "Family")
+    if risk_categories and "sleep_issues" in risk_categories:
+        dims.append(WellbeingDimension(
+            dimension="Sleep", value=clamp(100 - float(risk_categories["sleep_issues"]))
+        ))
+    from_stress("Confidence", "Self-Confidence")
+    from_component("Motivation", "goal_progress")
+    from_component("Resilience", "mood_stability")
+    from_component("Engagement", "checkin_engagement")
+    from_component("Support", "counselor_engagement")
+
+    return dims
+
+
+def _blend_stress_factors(
+    stress_categories: dict,
+    checkin_records: list[WellnessRecord],
+    risk_categories: dict,
+) -> list[StressFactor]:
+    """Realistic stress ranking from three real sources:
+    the AI conversation analysis, the student's own check-in reasons, and the
+    latest AI risk categories. Each factor keeps the strongest signal (max)."""
+    factors: dict[str, float] = {
+        name: float(value)
+        for name, value in (stress_categories or {}).items()
+        if value and value > 0
+    }
+
+    # Check-in reasons: how often a topic is "the main thing on my mind"
+    reason_counts = Counter(
+        r.mood_reason for r in checkin_records
+        if r.mood_reason in _REASON_TO_FACTOR
+    )
+    for reason, count in reason_counts.items():
+        name = _REASON_TO_FACTOR[reason]
+        value = min(count * 15, 70)
+        factors[name] = max(factors.get(name, 0), value)
+
+    # AI risk categories that map to stress topics
+    for category, name in _RISK_TO_FACTOR.items():
+        value = float((risk_categories or {}).get(category, 0) or 0)
+        if value > 0:
+            factors[name] = max(factors.get(name, 0), value)
+
+    ranked = sorted(factors.items(), key=lambda kv: kv[1], reverse=True)[:8]
+    return [StressFactor(name=name, value=int(value)) for name, value in ranked]
+
+
 async def get_child_insights(
     db: AsyncSession, user_id: uuid.UUID, student_id: uuid.UUID
 ) -> tuple[ChildInsightResponse, bool]:
@@ -217,22 +355,46 @@ async def get_child_insights(
         if snapshots else "Stable"
     )
 
-    # Stress factors: latest AI distribution (nonzero categories, largest first)
+    # Stress factors: AI distribution blended with check-in reasons + risk categories
     stress_row = (await db.execute(
         select(StressDistribution)
         .where(StressDistribution.student_id == student_id)
         .order_by(StressDistribution.created_at.desc())
         .limit(1)
     )).scalar_one_or_none()
-    stress_factors = []
-    if stress_row is not None:
-        stress_factors = [
-            StressFactor(name=name, value=int(value))
-            for name, value in sorted(
-                stress_row.categories.items(), key=lambda kv: kv[1], reverse=True
-            )
-            if value > 0
-        ]
+
+    month_ago = now - timedelta(days=30)
+    checkin_records_30d = list((await db.execute(
+        select(WellnessRecord).where(
+            WellnessRecord.student_id == student_id,
+            WellnessRecord.created_at >= month_ago,
+        )
+    )).scalars().all())
+
+    latest_assessment = assessments[-1] if assessments else (await db.execute(
+        select(RiskAssessment)
+        .where(RiskAssessment.student_id == student_id)
+        .order_by(RiskAssessment.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    risk_categories = (latest_assessment.categories or {}) if latest_assessment else {}
+
+    stress_factors = _blend_stress_factors(
+        (stress_row.categories if stress_row else {}) or {},
+        checkin_records_30d,
+        risk_categories,
+    )
+
+    # Weekly mood summary (aggregate -- daily mood icons stay with the student)
+    week_records = [r for r in checkin_records_30d if r.created_at >= week_ago]
+    weekly_mood = _weekly_mood_summary(week_records)
+
+    # Wellbeing dimensions for the radar, from real signals only
+    wellbeing_dims = _wellbeing_dimensions(
+        (latest_score.components or {}) if latest_score else {},
+        (stress_row.categories if stress_row else {}) or {},
+        risk_categories,
+    )
 
     # Weekly progress counters
     messages_7d = (await db.execute(
@@ -298,8 +460,36 @@ async def get_child_insights(
             "checkin_days": checkins_7d,
             "goals_completed": goals_completed_7d,
         },
+        family_communication=insights_json.get("family_communication", []),
+        family_activities=insights_json.get("family_activities", []),
+        weekly_mood_summary=weekly_mood,
+        wellbeing_dimensions=wellbeing_dims,
+        protective_factors=insights_json.get("protective_factors", []),
+        risk_factors=insights_json.get("risk_factors", []),
     )
     return response, stale
+
+
+async def get_wellness_trend_range(
+    db: AsyncSession, user_id: uuid.UUID, student_id: uuid.UUID, days: int
+) -> list[WellnessTrendPoint]:
+    """Daily latest computed wellness score over the requested window (ISO dates)."""
+    await _verify_parent_child_link(db, user_id, student_id)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    scores = (await db.execute(
+        select(WellnessScore)
+        .where(WellnessScore.student_id == student_id, WellnessScore.created_at >= cutoff)
+        .order_by(WellnessScore.created_at.asc())
+    )).scalars().all()
+
+    daily_latest: dict[str, WellnessScore] = {}
+    for s in scores:
+        daily_latest[s.created_at.date().isoformat()] = s
+    return [
+        WellnessTrendPoint(date=day, score=float(daily_latest[day].overall_score))
+        for day in sorted(daily_latest)
+    ]
 
 
 async def _verify_parent_child_link(

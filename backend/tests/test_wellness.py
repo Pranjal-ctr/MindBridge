@@ -1,5 +1,5 @@
 """
-MindBridge Wellness Tests
+Kio Wellness Tests
 """
 
 import pytest

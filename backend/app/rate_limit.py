@@ -1,5 +1,5 @@
 """
-MindBridge Rate Limiting
+Kio Rate Limiting
 In-process sliding-window limiter as a FastAPI dependency.
 
 Suitable for single-process deployments (dev/beta). For multi-worker

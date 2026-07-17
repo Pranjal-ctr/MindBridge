@@ -222,6 +222,10 @@ async def maybe_refresh_parent_insight(
             "today_insights": [i.model_dump() for i in payload.today_insights],
             "improvements": payload.improvements,
             "concerns": payload.concerns,
+            "family_communication": payload.family_communication,
+            "family_activities": payload.family_activities,
+            "protective_factors": payload.protective_factors,
+            "risk_factors": payload.risk_factors,
         },
     )
     db.add(insight)

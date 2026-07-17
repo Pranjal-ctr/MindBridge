@@ -1,1 +1,1 @@
-"""MindBridge Wellness Module"""
+"""Kio Wellness Module"""

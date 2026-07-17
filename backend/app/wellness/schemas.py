@@ -1,5 +1,5 @@
 """
-MindBridge Wellness Schemas
+Kio Wellness Schemas
 """
 
 from __future__ import annotations
@@ -128,6 +128,148 @@ class MoodCheckinRequest(BaseModel):
 class MoodCheckinResponse(BaseModel):
     record: WellnessRecordResponse
     wellness: WellnessScoreResponse
+
+
+# -------------------------------------------------------------------
+# Daily Check-in (official, once per calendar day)
+# -------------------------------------------------------------------
+
+DAILY_MOODS = ["amazing", "good", "okay", "low", "very_difficult"]
+CHECKIN_REASONS = [
+    "academics", "family", "friends", "relationship", "health",
+    "career", "sports", "financial", "social_media", "other",
+]
+
+_MOOD_PATTERN = r"^(amazing|good|okay|low|very_difficult)$"
+_REASON_PATTERN = (
+    r"^(academics|family|friends|relationship|health|career|sports|financial|social_media|other)$"
+)
+
+
+class DailyCheckinRequest(BaseModel):
+    """Official mood check-in: mood + primary reason, optional reflection."""
+    mood: str = Field(..., pattern=_MOOD_PATTERN)
+    reason: str = Field(..., pattern=_REASON_PATTERN)
+    reflection: str | None = Field(None, max_length=2000)
+
+
+class DailyCheckinInfo(BaseModel):
+    """The current official check-in as stored (latest in this window)."""
+    date: date
+    mood: str
+    reason: str
+    reflection: str | None = None
+    created_at: datetime | None = None
+
+
+class DailyCheckinStatusResponse(BaseModel):
+    """Check-in state for the current 12-hour window.
+
+    `completed_today` keeps its original name for API compatibility but means
+    "completed in the current 12-hour window". Up to 2 submissions per window:
+    the initial check-in plus one update.
+    """
+    completed_today: bool
+    checkin: DailyCheckinInfo | None = None
+    updates_remaining: int = 0
+    window_ends_at: datetime | None = None
+
+
+class DailyCheckinResponse(BaseModel):
+    checkin: DailyCheckinInfo
+    wellness: WellnessScoreResponse
+    updates_remaining: int = 0
+
+
+# -------------------------------------------------------------------
+# Mood Calendar
+# -------------------------------------------------------------------
+
+class MoodCalendarDay(BaseModel):
+    """One calendar day; mood is the official check-in label when present."""
+    date: date
+    mood: str | None = None
+    mood_score: int | None = None
+    reason: str | None = None
+    note: str | None = None  # student's own reflection (never sent to parents)
+
+
+class MoodCalendarResponse(BaseModel):
+    month: str  # YYYY-MM
+    days: list[MoodCalendarDay]
+
+
+# -------------------------------------------------------------------
+# Personal Insights (pattern mining, shown only with enough history)
+# -------------------------------------------------------------------
+
+class PersonalInsight(BaseModel):
+    kind: str  # weekday_pattern | reason_pattern | mood_trend | stress_pattern | consistency
+    title: str
+    body: str
+    evidence: str  # e.g. "Based on 21 check-ins over the last 6 weeks"
+
+
+class PersonalInsightsResponse(BaseModel):
+    insights: list[PersonalInsight]
+    sufficient_data: bool
+    checkin_days: int
+
+
+# -------------------------------------------------------------------
+# Activities (personalized suggestions)
+# -------------------------------------------------------------------
+
+class ActivityItem(BaseModel):
+    activity_id: str
+    title: str
+    description: str
+    category: str  # mindfulness | physical | social | reflection | rest | creative
+    duration_minutes: int
+    reason: str  # why this is suggested today
+    completed: bool = False  # persisted completion state
+    is_daily: bool = False   # today's fresh pick vs. the weekly set
+
+
+class ActivitiesResponse(BaseModel):
+    activities: list[ActivityItem]
+    personalized: bool  # True when the AI tailored the list; False = signal-based defaults
+    generated_at: datetime
+
+
+class ActivityCompleteRequest(BaseModel):
+    activity_id: str = Field(..., max_length=60)
+    title: str = Field(..., max_length=255)
+
+
+# -------------------------------------------------------------------
+# Weekly Report (shared response shape for student/parent/counselor)
+# -------------------------------------------------------------------
+
+class WeeklyReportResponse(BaseModel):
+    audience: str
+    week_start: date
+    headline: str
+    summary: str
+    highlights: list[str] = []
+    focus_areas: list[str] = []
+    generated_by: str | None = None
+    created_at: datetime
+
+
+def weekly_report_response(report) -> "WeeklyReportResponse":
+    """Map a WeeklyReport row to the API shape."""
+    content = report.content or {}
+    return WeeklyReportResponse(
+        audience=report.audience,
+        week_start=report.week_start,
+        headline=content.get("headline", ""),
+        summary=content.get("summary", ""),
+        highlights=content.get("highlights", []),
+        focus_areas=content.get("focus_areas", []),
+        generated_by=report.generated_by,
+        created_at=report.created_at,
+    )
 
 
 # -------------------------------------------------------------------

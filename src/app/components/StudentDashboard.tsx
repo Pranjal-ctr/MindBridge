@@ -1,12 +1,16 @@
 import { Link } from 'react-router-dom';
-import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, Mic, Smile, Meh, Frown, Menu, X, Plus, Loader2, Trash2, Users } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, Mic, Calendar, Menu, X, Plus, Loader2, Trash2, Users, ClipboardCheck } from 'lucide-react';
+import { KioLogo } from './KioLogo';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { useConversations, useMessages } from '../../hooks/useConversations';
 import { useWellnessScore } from '../../hooks/useWellness';
 import { StudentOnboarding } from './StudentOnboarding';
+import { DailyCheckinModal } from './DailyCheckinModal';
+import { MoodCalendarModal } from './MoodCalendarModal';
 import api from '../../lib/api';
-import type { MoodCheckin, OnboardingResponse } from '../../lib/types';
+import { MOOD_META, formatTime } from '../../lib/mood';
+import type { DailyCheckinStatusResponse, OnboardingResponse } from '../../lib/types';
 
 export function StudentDashboard() {
   const { user, logout } = useAuth();
@@ -23,14 +27,32 @@ export function StudentDashboard() {
     return () => { cancelled = true; };
   }, []);
 
+  // Mandatory mood check-in: gate the dashboard until this window's is done
+  const [checkinStatus, setCheckinStatus] = useState<DailyCheckinStatusResponse | null>(null);
+  const [showCheckin, setShowCheckin] = useState(false);
+  const [showMoodUpdate, setShowMoodUpdate] = useState(false);
+  const [showMoodCalendar, setShowMoodCalendar] = useState(false);
+
+  const fetchCheckinStatus = useCallback(async () => {
+    try {
+      const { data } = await api.get<DailyCheckinStatusResponse>('/wellness/checkin/today');
+      setCheckinStatus(data);
+      setShowCheckin(!data.completed_today);
+    } catch {
+      /* non-fatal: skip the gate if the status check fails */
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCheckinStatus();
+  }, [fetchCheckinStatus]);
+
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const { messages, isLoading: msgsLoading, isSending, sendMessage } = useMessages(activeConversationId);
-  const { score: wellness, checkInMood, refetch: refetchWellness } = useWellnessScore();
+  const { score: wellness, refetch: refetchWellness } = useWellnessScore();
 
   const [messageInput, setMessageInput] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [selectedMood, setSelectedMood] = useState<MoodCheckin | null>(null);
-  const [isCheckingIn, setIsCheckingIn] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-select the first conversation on load
@@ -82,19 +104,6 @@ export function StudentDashboard() {
     }
   };
 
-  const handleMoodCheckin = async (mood: MoodCheckin) => {
-    if (isCheckingIn) return;
-    setSelectedMood(mood);
-    setIsCheckingIn(true);
-    try {
-      await checkInMood(mood);
-    } catch {
-      // Non-fatal: the button still reflects the selection locally
-    } finally {
-      setIsCheckingIn(false);
-    }
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -126,14 +135,34 @@ export function StudentDashboard() {
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       {showOnboarding && <StudentOnboarding onComplete={() => setShowOnboarding(false)} />}
+      {!showOnboarding && showCheckin && (
+        <DailyCheckinModal
+          onComplete={() => {
+            setShowCheckin(false);
+            fetchCheckinStatus();
+            refetchWellness();
+          }}
+        />
+      )}
+      {!showOnboarding && showMoodUpdate && (
+        <DailyCheckinModal
+          mode="update"
+          onClose={() => setShowMoodUpdate(false)}
+          onComplete={() => {
+            setShowMoodUpdate(false);
+            fetchCheckinStatus();
+            refetchWellness();
+          }}
+        />
+      )}
+      {showMoodCalendar && <MoodCalendarModal onClose={() => setShowMoodCalendar(false)} />}
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-50 w-64 bg-sidebar border-r border-sidebar-border transition-transform duration-300 ease-in-out`}>
         <div className="flex flex-col h-full">
           <div className="p-4 border-b border-sidebar-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Brain className="w-6 h-6 text-primary" />
-                <span className="font-semibold">MindBridge</span>
+                <KioLogo className="h-7 w-auto" />
               </div>
               <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
                 <X className="w-5 h-5" />
@@ -214,10 +243,10 @@ export function StudentDashboard() {
               <BookOpen className="w-5 h-5" />
               <span className="text-sm">Journal</span>
             </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
+            <Link to="/student/activities" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
               <Lightbulb className="w-5 h-5" />
-              <span className="text-sm">Insights</span>
-            </a>
+              <span className="text-sm">Activities & Insights</span>
+            </Link>
             <Link to="/student/family" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
               <Users className="w-5 h-5" />
               <span className="text-sm">Family</span>
@@ -269,12 +298,12 @@ export function StudentDashboard() {
 
         {/* Wellness Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 md:p-6 border-b border-border">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
-            <div className="text-sm text-blue-700 mb-1">Wellness Score</div>
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-5 border border-blue-200">
+            <div className="text-sm font-medium text-blue-700 mb-1">Wellness Score</div>
             <div className="text-2xl font-bold text-blue-900">
               {wellness?.has_data ? `${Math.round(wellness.overall!)}/100` : '—'}
             </div>
-            <div className="text-xs text-blue-600 mt-1">
+            <div className="text-xs text-blue-600 mt-1.5">
               {wellness?.has_data
                 ? wellness.trend === 'improving'
                   ? '↑ Improving'
@@ -285,42 +314,71 @@ export function StudentDashboard() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
-            <div className="text-sm text-emerald-700 mb-1">Check-in Streak</div>
-            <div className="text-2xl font-bold text-emerald-900">
+          <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-xl p-5 border border-teal-200">
+            <div className="text-sm font-medium text-teal-700 mb-1">Check-in Streak</div>
+            <div className="text-2xl font-bold text-teal-900">
               {wellness?.streak_days ?? 0} day{wellness?.streak_days === 1 ? '' : 's'}
             </div>
-            <div className="text-xs text-emerald-600 mt-1">
+            <div className="text-xs text-teal-600 mt-1.5">
               {(wellness?.streak_days ?? 0) > 0 ? 'Keep it up!' : 'Check in today to start a streak'}
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
-            <div className="text-sm text-purple-700 mb-1">Today's Mood</div>
-            <div className="flex gap-2 mt-2">
-              {[
-                { icon: Smile, label: 'Happy' as MoodCheckin, color: 'text-emerald-600' },
-                { icon: Meh, label: 'Okay' as MoodCheckin, color: 'text-amber-600' },
-                { icon: Frown, label: 'Down' as MoodCheckin, color: 'text-red-600' }
-              ].map(({ icon: Icon, label, color }) => {
-                const value = label.toLowerCase() as MoodCheckin;
-                return (
-                  <button
-                    key={label}
-                    onClick={() => handleMoodCheckin(value)}
-                    disabled={isCheckingIn}
-                    className={`p-2 rounded-lg transition disabled:opacity-50 ${
-                      selectedMood === value
-                        ? 'bg-purple-200'
-                        : 'bg-white hover:bg-purple-100'
-                    }`}
-                  >
-                    <Icon className={`w-5 h-5 ${color}`} />
-                  </button>
-                );
-              })}
+          {/* Current Mood */}
+          {checkinStatus?.completed_today && checkinStatus.checkin ? (
+            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-5 border border-indigo-200">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-sm font-medium text-indigo-700 mb-1">Today's Mood</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl leading-none">
+                      {MOOD_META[checkinStatus.checkin.mood].emoji}
+                    </span>
+                    <span className="text-lg font-semibold text-indigo-900">
+                      {MOOD_META[checkinStatus.checkin.mood].label}
+                    </span>
+                  </div>
+                  <div className="text-xs text-indigo-600 mt-1.5">
+                    {checkinStatus.checkin.created_at
+                      ? `Last updated ${formatTime(checkinStatus.checkin.created_at)}`
+                      : 'Updated this session'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowMoodCalendar(true)}
+                  className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-200/60 transition"
+                  title="View mood calendar"
+                >
+                  <Calendar className="w-4 h-4" />
+                </button>
+              </div>
+              {checkinStatus.updates_remaining > 0 ? (
+                <button
+                  onClick={() => setShowMoodUpdate(true)}
+                  className="mt-3 w-full py-1.5 text-sm font-medium text-indigo-700 bg-white/70 hover:bg-white rounded-lg border border-indigo-200 transition"
+                >
+                  Update Mood
+                </button>
+              ) : (
+                <div className="mt-3 text-xs text-indigo-500 text-center py-1.5">
+                  Mood already updated for this session.
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            <button
+              onClick={() => setShowCheckin(true)}
+              className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-5 border-2 border-dashed border-indigo-300 text-left hover:border-indigo-400 transition"
+            >
+              <div className="flex items-center gap-2 text-sm font-medium text-indigo-700 mb-1">
+                <ClipboardCheck className="w-4 h-4" />
+                Complete Today's Check-in
+              </div>
+              <div className="text-xs text-indigo-600">
+                A quick mood check keeps your insights accurate.
+              </div>
+            </button>
+          )}
         </div>
 
         {/* Chat Area */}
@@ -334,11 +392,11 @@ export function StudentDashboard() {
               {/* Empty state — show suggested prompts */}
               <div className="flex justify-start">
                 <div className="flex items-start gap-2">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0 mt-1">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1">
                     <Brain className="w-4 h-4 text-white" />
                   </div>
                   <div className="max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 bg-muted text-foreground">
-                    Hey! I'm <strong>Comrade</strong>, your trusted companion here on MindBridge. How are you feeling today?
+                    Hey! I'm <strong>Comrade</strong>, your trusted companion here on Kio. How are you feeling today?
                   </div>
                 </div>
               </div>
@@ -364,7 +422,7 @@ export function StudentDashboard() {
                 className={`flex ${msg.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 {msg.sender_type !== 'user' && (
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0 mt-1 mr-2">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1 mr-2">
                     <Brain className="w-4 h-4 text-white" />
                   </div>
                 )}
@@ -384,7 +442,7 @@ export function StudentDashboard() {
           {/* Comrade is thinking indicator */}
           {isSending && (
             <div className="flex justify-start">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0 mt-1 mr-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1 mr-2">
                 <Brain className="w-4 h-4 text-white" />
               </div>
               <div className="max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 bg-muted text-muted-foreground flex items-center gap-3">

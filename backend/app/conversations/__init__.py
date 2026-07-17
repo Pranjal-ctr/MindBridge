@@ -1,1 +1,1 @@
-"""MindBridge Conversations Module"""
+"""Kio Conversations Module"""

@@ -1,4 +1,4 @@
-# MindBridge API Reference
+# Kio API Reference
 
 > Base URL: `http://localhost:8000`
 > Authentication: Bearer JWT in `Authorization` header

@@ -1,5 +1,5 @@
 """
-MindBridge Analytics Service
+Kio Analytics Service
 """
 
 from __future__ import annotations

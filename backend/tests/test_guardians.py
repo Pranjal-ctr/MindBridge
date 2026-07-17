@@ -1,5 +1,5 @@
 """
-MindBridge Guardian Management Tests
+Kio Guardian Management Tests
 """
 
 import uuid

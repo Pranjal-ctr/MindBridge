@@ -1,6 +1,6 @@
 """
 Alembic Environment Configuration
-Async migration support for MindBridge.
+Async migration support for Kio.
 """
 
 import sys

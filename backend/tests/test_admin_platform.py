@@ -1,5 +1,5 @@
 """
-MindBridge Platform Admin (Phase 5 Group C) Tests
+Kio Platform Admin (Phase 5 Group C) Tests
 """
 
 import uuid

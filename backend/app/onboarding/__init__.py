@@ -1,1 +1,1 @@
-# MindBridge Onboarding Module
+# Kio Onboarding Module

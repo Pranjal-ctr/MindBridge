@@ -1,1 +1,1 @@
-"""MindBridge Users Module"""
+"""Kio Users Module"""
