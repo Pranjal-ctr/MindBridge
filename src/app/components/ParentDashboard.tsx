@@ -9,6 +9,7 @@
 
 import { TrendingUp, TrendingDown, Minus, Heart, AlertCircle, CheckCircle, Info, Calendar, Menu, X, Loader2, RefreshCw, Users, KeyRound, Sparkles, MessageCircle, Shield, HelpCircle, Lightbulb } from 'lucide-react';
 import { KioLogo } from './KioLogo';
+import { Disclaimer } from './Disclaimer';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../lib/auth-context';
@@ -1097,6 +1098,9 @@ export function ParentDashboard() {
               </div>
             </>
           )}
+
+          {/* Non-diagnostic disclaimer */}
+          <Disclaimer variant="full" className="pt-2" />
         </div>
       </div>
     </div>

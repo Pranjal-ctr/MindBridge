@@ -4,6 +4,7 @@ import { KioLogo } from './KioLogo';
 import { useEffect, useState } from 'react';
 import { CounselorAvailability } from './CounselorAvailability';
 import { RiskQueue } from './RiskQueue';
+import { Disclaimer } from './Disclaimer';
 import api from '../../lib/api';
 import type {
   CounselorStudentListResponse,
@@ -339,6 +340,9 @@ export function CounselorDashboard() {
               );
             })}
           </div>
+
+          {/* Non-diagnostic disclaimer */}
+          <Disclaimer variant="full" className="pt-2" />
         </div>
       </div>
     </div>

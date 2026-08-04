@@ -7,7 +7,19 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Structured outcomes a counselor can record when resolving an assessment.
+# Kept as a closed vocabulary so the accumulating dataset stays clean/queryable.
+RISK_OUTCOMES = [
+    "no_action_needed",
+    "monitoring",
+    "counseling_scheduled",
+    "parent_contacted",
+    "escalated",
+    "referred_external",
+    "false_positive",
+]
 
 
 class RiskAssessmentCreate(BaseModel):
@@ -35,6 +47,10 @@ class RiskAssessmentResponse(BaseModel):
     review_status: str | None = None
     reviewed_by: uuid.UUID | None = None
     reviewed_at: datetime | None = None
+    counselor_risk_level: str | None = None
+    verdict: str | None = None
+    outcome: str | None = None
+    resolution_note: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -73,6 +89,10 @@ class RiskQueueItem(BaseModel):
     risk_level: str
     risk_score: float | None = None
     categories: dict | None = None
+    confidence: float | None = None
+    # True when the model's confidence is below the configured floor: the
+    # counselor should read this as "not enough signal", not "low risk".
+    inconclusive: bool = False
     summary: str | None = None
     trigger_reason: str | None = None
     generated_by: str | None = None
@@ -85,6 +105,23 @@ class RiskQueueListResponse(BaseModel):
 
 
 class RiskReviewUpdate(BaseModel):
-    """Counselor action on a queued assessment."""
+    """Counselor action on a queued assessment.
+
+    `review_status` is the only required field, so the pre-existing
+    {review_status} payload keeps working. The rest capture the counselor's
+    judgment for the evaluation dataset -- all optional.
+    """
     review_status: str = Field(..., pattern=r"^(acknowledged|resolved)$")
+    verdict: str | None = Field(None, pattern=r"^(agree|disagree)$")
+    counselor_risk_level: str | None = Field(
+        None, pattern=r"^(green|yellow|red|critical)$"
+    )
+    outcome: str | None = None
     note: str | None = Field(None, max_length=2000)
+
+    @field_validator("outcome")
+    @classmethod
+    def _known_outcome(cls, v: str | None) -> str | None:
+        if v is not None and v not in RISK_OUTCOMES:
+            raise ValueError(f"outcome must be one of {RISK_OUTCOMES}")
+        return v

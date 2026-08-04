@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Users, TrendingUp, AlertTriangle, Calendar, BarChart3, Menu, X } from 'lucide-react';
 import { KioLogo } from './KioLogo';
+import { Disclaimer } from './Disclaimer';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar } from 'recharts';
 import { useState } from 'react';
 
@@ -316,6 +317,9 @@ export function SchoolAdminDashboard() {
               </div>
             </div>
           </div>
+
+          {/* Non-diagnostic disclaimer */}
+          <Disclaimer variant="short" className="pt-2" />
         </div>
       </div>
     </div>

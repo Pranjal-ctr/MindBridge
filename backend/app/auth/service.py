@@ -179,6 +179,8 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> tupl
             detail="Account is deactivated. Contact your administrator.",
         )
 
+    await _ensure_tenant_not_suspended(db, user)
+
     # Update last_login
     user.last_login = datetime.now(timezone.utc)
     await db.flush()
@@ -223,6 +225,7 @@ async def google_authenticate(db: AsyncSession, google_id_token: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is deactivated. Contact your administrator.",
             )
+        await _ensure_tenant_not_suspended(db, user)
         user.last_login = datetime.now(timezone.utc)
         await db.flush()
         tokens = _generate_tokens(user)
@@ -362,6 +365,8 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenRes
             detail="User not found or deactivated",
         )
 
+    await _ensure_tenant_not_suspended(db, user)
+
     return _generate_tokens(user)
 
 
@@ -388,6 +393,22 @@ async def _enforce_student_seat_limit(db: AsyncSession, tenant: Tenant) -> None:
         )
 
 
+async def _ensure_tenant_not_suspended(db: AsyncSession, user: User) -> None:
+    """Block login/refresh for users of suspended or archived schools.
+    Platform admins are exempt so the school can always be reactivated."""
+    if user.role == "admin":
+        return
+    result = await db.execute(
+        select(Tenant).where(Tenant.tenant_id == user.tenant_id)
+    )
+    tenant = result.scalar_one_or_none()
+    if tenant is not None and (tenant.deleted_at is not None or tenant.status == "suspended"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your school's access is currently suspended. Contact Kio support.",
+        )
+
+
 async def _resolve_tenant(db: AsyncSession, school_code: str | None) -> Tenant:
     """Look up tenant by school code, or use a default."""
     if school_code:
@@ -399,6 +420,11 @@ async def _resolve_tenant(db: AsyncSession, school_code: str | None) -> Tenant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"No school found with code '{school_code}'",
+            )
+        if tenant.deleted_at is not None or tenant.status == "suspended":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This school is not accepting registrations right now.",
             )
         return tenant
 

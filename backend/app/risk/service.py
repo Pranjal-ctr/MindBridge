@@ -120,6 +120,10 @@ async def get_risk_queue(
     db: AsyncSession, tenant_id: uuid.UUID
 ) -> tuple[list[RiskQueueItem], int]:
     """Pending assessments for the tenant, most severe first, then newest."""
+    from app.intelligence.config import load_config
+
+    min_confidence = float((await load_config(db, "safety_floors"))["min_confidence"])
+
     result = await db.execute(
         select(RiskAssessment, User)
         .join(StudentProfile, RiskAssessment.student_id == StudentProfile.student_id)
@@ -132,21 +136,25 @@ async def get_risk_queue(
     )
     rows = result.all()
 
-    items = [
-        RiskQueueItem(
+    items = []
+    for assessment, user in rows:
+        confidence = float(assessment.confidence) if assessment.confidence is not None else None
+        items.append(RiskQueueItem(
             risk_id=assessment.risk_id,
             student_id=assessment.student_id,
             student_name=f"{user.first_name} {user.last_name}",
             risk_level=assessment.risk_level,
             risk_score=float(assessment.risk_score) if assessment.risk_score is not None else None,
             categories=assessment.categories,
+            confidence=confidence,
+            # A keyword-tripwire row has no model confidence; treat only scored
+            # AI rows below the floor as inconclusive.
+            inconclusive=confidence is not None and confidence < min_confidence,
             summary=assessment.summary,
             trigger_reason=assessment.trigger_reason,
             generated_by=assessment.generated_by,
             created_at=assessment.created_at,
-        )
-        for assessment, user in rows
-    ]
+        ))
     return items, len(items)
 
 
@@ -176,11 +184,28 @@ async def review_risk_assessment(
     assessment.reviewed_by = reviewer_user_id
     assessment.reviewed_at = datetime.now(timezone.utc)
 
+    # Counselor verdict capture (all optional -> old payloads unaffected).
+    if payload.verdict is not None:
+        assessment.verdict = payload.verdict
+    if payload.counselor_risk_level is not None:
+        assessment.counselor_risk_level = payload.counselor_risk_level
+    if payload.outcome is not None:
+        assessment.outcome = payload.outcome
+    if payload.note is not None:
+        assessment.resolution_note = payload.note
+
     db.add(AuditLog(
         user_id=reviewer_user_id,
         action=f"risk_review:{payload.review_status}",
         entity_type="risk_assessment",
         entity_id=risk_id,
+        # Structured trail for the evaluation dataset (AI vs. human).
+        details={
+            "ai_risk_level": assessment.risk_level,
+            "counselor_risk_level": payload.counselor_risk_level,
+            "verdict": payload.verdict,
+            "outcome": payload.outcome,
+        },
     ))
     await db.flush()
     await db.refresh(assessment)

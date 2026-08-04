@@ -5,10 +5,26 @@ Pydantic v2 models for authentication requests and responses.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+# Shared validators --------------------------------------------------
+
+# A plausible phone number: optional leading "+" then 7-15 digits (E.164 range).
+# Formatting characters (spaces, dashes, dots, parens) are stripped first, so a
+# 10-digit local number and an international "+<cc>..." number both validate.
+_PHONE_RE = re.compile(r"^\+?\d{7,15}$")
+
+
+def _normalize_phone(value: str) -> str:
+    cleaned = re.sub(r"[\s\-().]", "", value or "")
+    if not _PHONE_RE.match(cleaned):
+        raise ValueError("Enter a valid mobile number (7-15 digits).")
+    return cleaned
 
 
 # Requests -----------------------------------------------------------
@@ -27,6 +43,11 @@ class SignupRequest(BaseModel):
     phone: str = Field(..., min_length=5, max_length=20, description="Contact number (required)")
     school_code: str | None = Field(None, max_length=50, description="Required for student, parent, school_admin")
     invite_code: str | None = Field(None, max_length=10, description="Parent invite code from student (parent signup only)")
+
+    @field_validator("phone")
+    @classmethod
+    def _check_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
 
 
 class LoginRequest(BaseModel):
@@ -106,3 +127,8 @@ class GoogleCompleteRequest(BaseModel):
     phone: str = Field(..., min_length=5, max_length=20)
     school_code: str | None = Field(None, max_length=50)
     invite_code: str | None = Field(None, max_length=10)
+
+    @field_validator("phone")
+    @classmethod
+    def _check_phone(cls, v: str) -> str:
+        return _normalize_phone(v)

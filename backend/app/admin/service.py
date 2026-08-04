@@ -5,13 +5,16 @@ Kio Admin Service
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import log_audit
 from app.admin.schemas import (
+    AdminUserListResponse,
+    AdminUserRow,
     AIRouteListResponse,
     AIRouteResponse,
     AIRouteUpdate,
@@ -66,18 +69,62 @@ from database.models import (
 # Tenants
 # -------------------------------------------------------------------
 
-async def list_tenants(db: AsyncSession) -> tuple[list[TenantResponse], int]:
-    """List all tenants (admin only)."""
-    count_result = await db.execute(select(func.count()).select_from(Tenant))
+# Internal tenants that must never be suspended, archived, or deleted.
+RESERVED_SCHOOL_CODES = {"PLATFORM", "DEFAULT"}
+
+
+async def _get_tenant_or_404(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant:
+    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_id))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return tenant
+
+
+async def list_tenants(
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 20,
+    search: str | None = None,
+    status_filter: str | None = None,
+    include_archived: bool = False,
+) -> tuple[list[TenantResponse], int]:
+    """List schools (admin only). Internal org tenants (PLATFORM/DEFAULT) are excluded
+    by the school type filter; archived schools are hidden unless requested."""
+    filters = [Tenant.tenant_type == "school"]
+    if not include_archived:
+        filters.append(Tenant.deleted_at.is_(None))
+    if status_filter:
+        filters.append(Tenant.status == status_filter)
+    if search:
+        pattern = f"%{search}%"
+        filters.append(
+            Tenant.tenant_name.ilike(pattern) | Tenant.school_code.ilike(pattern)
+        )
+
+    count_result = await db.execute(
+        select(func.count()).select_from(Tenant).where(*filters)
+    )
     total = count_result.scalar() or 0
 
-    result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    result = await db.execute(
+        select(Tenant)
+        .where(*filters)
+        .order_by(Tenant.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     tenants = result.scalars().all()
 
     return [TenantResponse.model_validate(t) for t in tenants], total
 
 
-async def create_tenant(db: AsyncSession, payload: TenantCreate) -> TenantResponse:
+async def create_tenant(
+    db: AsyncSession,
+    payload: TenantCreate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> TenantResponse:
     """Create a new tenant."""
     # Check for duplicate school code
     if payload.school_code:
@@ -90,34 +137,59 @@ async def create_tenant(db: AsyncSession, payload: TenantCreate) -> TenantRespon
                 detail=f"School code '{payload.school_code}' already exists",
             )
 
-    tenant = Tenant(
-        tenant_name=payload.tenant_name,
-        tenant_type=payload.tenant_type,
-        school_code=payload.school_code,
-        subscription_plan=payload.subscription_plan,
-        student_limit=payload.student_limit,
-    )
+    tenant = Tenant(**payload.model_dump())
     db.add(tenant)
     await db.flush()
     await db.refresh(tenant)
+    await log_audit(
+        db, user_id=actor_id, action="tenant.create",
+        entity_type="tenant", entity_id=tenant.tenant_id,
+        details={"tenant_name": tenant.tenant_name, "school_code": tenant.school_code},
+        request=request,
+    )
     return TenantResponse.model_validate(tenant)
 
 
 async def update_tenant(
-    db: AsyncSession, tenant_id: uuid.UUID, payload: TenantUpdate
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    payload: TenantUpdate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> TenantResponse:
-    """Update tenant details."""
-    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_id))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    """Update tenant details (also covers suspend/activate via the status field)."""
+    tenant = await _get_tenant_or_404(db, tenant_id)
 
     update_data = payload.model_dump(exclude_unset=True)
+    new_status = update_data.get("status")
+    if (
+        new_status
+        and new_status != "active"
+        and tenant.school_code in RESERVED_SCHOOL_CODES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal platform tenants cannot be suspended or deactivated",
+        )
+
     for field, value in update_data.items():
         setattr(tenant, field, value)
 
     await db.flush()
     await db.refresh(tenant)
+
+    if new_status == "suspended":
+        action = "tenant.suspend"
+    elif new_status == "active":
+        action = "tenant.activate"
+    else:
+        action = "tenant.update"
+    await log_audit(
+        db, user_id=actor_id, action=action,
+        entity_type="tenant", entity_id=tenant.tenant_id,
+        details={"changed": sorted(update_data.keys())},
+        request=request,
+    )
     return TenantResponse.model_validate(tenant)
 
 
@@ -283,7 +355,12 @@ async def break_glass_get_messages(
 # Staff Users
 # -------------------------------------------------------------------
 
-async def create_staff_user(db: AsyncSession, payload: StaffUserCreate) -> StaffUserResponse:
+async def create_staff_user(
+    db: AsyncSession,
+    payload: StaffUserCreate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> StaffUserResponse:
     """Create a counselor or school_admin account. Platform admin only."""
     from app.auth.service import _create_role_profile
     from app.auth.utils import hash_password
@@ -317,6 +394,12 @@ async def create_staff_user(db: AsyncSession, payload: StaffUserCreate) -> Staff
     await db.flush()
     await _create_role_profile(db, user)
 
+    await log_audit(
+        db, user_id=actor_id, action="user.create",
+        entity_type="user", entity_id=user.user_id,
+        details={"email": user.email, "role": user.role},
+        request=request,
+    )
     return StaffUserResponse.model_validate(user)
 
 
@@ -351,10 +434,39 @@ async def create_prompt(db: AsyncSession, payload: PromptCreate) -> PromptRespon
 # User administration
 # -------------------------------------------------------------------
 
+async def _ensure_not_last_active_admin(
+    db: AsyncSession, user: User, acting_admin_id: uuid.UUID | None
+) -> None:
+    """Guards for platform-admin accounts: no self-lockout, and at least one
+    active platform admin must always remain."""
+    if acting_admin_id is not None and user.user_id == acting_admin_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot suspend or delete your own account",
+        )
+    if user.role == "admin":
+        others = await db.execute(
+            select(func.count()).select_from(User).where(
+                User.role == "admin",
+                User.is_active == True,  # noqa: E712
+                User.user_id != user.user_id,
+            )
+        )
+        if (others.scalar() or 0) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot remove the last active platform admin",
+            )
+
+
 async def update_user_admin(
-    db: AsyncSession, user_id: uuid.UUID, payload: UserAdminUpdate
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    payload: UserAdminUpdate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> StaffUserResponse:
-    """Toggle active status and/or reset password for any user. Platform admin only."""
+    """Toggle active status, reset password, or edit profile basics. Platform admin only."""
     from app.auth.utils import hash_password
 
     result = await db.execute(select(User).where(User.user_id == user_id))
@@ -362,24 +474,150 @@ async def update_user_admin(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if payload.is_active is not None:
+    actions: list[str] = []
+    if payload.is_active is not None and payload.is_active != user.is_active:
+        if not payload.is_active:
+            await _ensure_not_last_active_admin(db, user, actor_id)
         user.is_active = payload.is_active
+        actions.append("user.activate" if payload.is_active else "user.suspend")
     if payload.new_password:
         user.password_hash = hash_password(payload.new_password)
+        actions.append("user.reset_password")
+    profile_changed = False
+    for field in ("first_name", "last_name", "phone"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(user, field, value)
+            profile_changed = True
+    if profile_changed:
+        actions.append("user.update")
 
     await db.flush()
     await db.refresh(user)
+    for action in actions:
+        await log_audit(
+            db, user_id=actor_id, action=action,
+            entity_type="user", entity_id=user.user_id,
+            details={"email": user.email, "role": user.role},
+            request=request,
+        )
     return StaffUserResponse.model_validate(user)
 
 
-async def delete_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> None:
-    """Delete a school/tenant (cascades to its users and data)."""
-    result = await db.execute(select(Tenant).where(Tenant.tenant_id == tenant_id))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    await db.delete(tenant)
+async def list_all_users(
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 20,
+    role: str | None = None,
+    search: str | None = None,
+    tenant_id: uuid.UUID | None = None,
+    status_filter: str | None = None,
+) -> tuple[list[AdminUserRow], int]:
+    """Cross-tenant user list. Deliberately includes suspended and soft-deleted
+    users so the platform admin can see and restore them."""
+    filters = []
+    if role:
+        filters.append(User.role == role)
+    if tenant_id is not None:
+        filters.append(User.tenant_id == tenant_id)
+    if status_filter == "active":
+        filters.append(User.is_active == True)  # noqa: E712
+        filters.append(User.deleted_at.is_(None))
+    elif status_filter == "inactive":
+        filters.append(User.is_active == False)  # noqa: E712
+        filters.append(User.deleted_at.is_(None))
+    elif status_filter == "deleted":
+        filters.append(User.deleted_at.is_not(None))
+    if search:
+        pattern = f"%{search}%"
+        filters.append(
+            User.email.ilike(pattern)
+            | (User.first_name + " " + User.last_name).ilike(pattern)
+        )
+
+    count_result = await db.execute(
+        select(func.count()).select_from(User).where(*filters)
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(User, Tenant.tenant_name)
+        .join(Tenant, User.tenant_id == Tenant.tenant_id)
+        .where(*filters)
+        .order_by(User.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    rows = [
+        AdminUserRow(
+            user_id=user.user_id,
+            tenant_id=user.tenant_id,
+            tenant_name=tenant_name,
+            email=user.email,
+            role=user.role,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            phone=user.phone,
+            profile_image=user.profile_image,
+            is_active=user.is_active,
+            deleted_at=user.deleted_at,
+            last_login=user.last_login,
+            created_at=user.created_at,
+        )
+        for user, tenant_name in result.all()
+    ]
+    return rows, total
+
+
+async def soft_delete_user(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> None:
+    """Soft-delete a user: blocks login immediately, keeps the row for audit trails."""
+    result = await db.execute(select(User).where(User.user_id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    await _ensure_not_last_active_admin(db, user, actor_id)
+
+    user.is_active = False
+    user.deleted_at = datetime.now(timezone.utc)
     await db.flush()
+    await log_audit(
+        db, user_id=actor_id, action="user.delete",
+        entity_type="user", entity_id=user.user_id,
+        details={"email": user.email, "role": user.role},
+        request=request,
+    )
+
+
+async def delete_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> None:
+    """Soft-delete (archive) a school. Data is retained; the school disappears from
+    default listings and its users can no longer sign in or register."""
+    tenant = await _get_tenant_or_404(db, tenant_id)
+    if tenant.school_code in RESERVED_SCHOOL_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal platform tenants cannot be archived",
+        )
+    tenant.deleted_at = datetime.now(timezone.utc)
+    tenant.status = "archived"
+    await db.flush()
+    await log_audit(
+        db, user_id=actor_id, action="tenant.archive",
+        entity_type="tenant", entity_id=tenant.tenant_id,
+        details={"tenant_name": tenant.tenant_name},
+        request=request,
+    )
 
 
 # -------------------------------------------------------------------

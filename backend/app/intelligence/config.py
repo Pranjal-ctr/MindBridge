@@ -43,6 +43,17 @@ DEFAULTS: dict[str, dict] = {
         "tripwire_level": "red",
         "deescalate_after": 3,
     },
+    # Safety floors: a *credible* acute signal from the LLM forces the overall
+    # risk to at least `enforced_overall`, so an under-scored `overall` can never
+    # hide self-harm/abuse. Deterministic guarantee on top of the prompt.
+    # All values are pilot-tunable from the DB (Admin/Playground) with no deploy.
+    "safety_floors": {
+        "self_harm": 60,          # category score (0-100) that trips the floor
+        "suicidal_ideation": 60,
+        "abuse": 65,
+        "enforced_overall": 70,   # overall risk is raised to at least this
+        "min_confidence": 0.55,   # below this an assessment reads "inconclusive"
+    },
     "parent_insight": {"ttl_hours": 6, "regen_on_risk_change": True},
     "analysis": {"context_messages": 20, "stress_smoothing": 0.6},
 }

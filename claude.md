@@ -132,6 +132,34 @@ npm run build
 
 ## 📝 Change Log
 
+### August 3, 2026 — Safety hardening + counselor verdict capture (trust & evaluation)
+- **Chat/signup UX** (prior pass): mobile+email format validation (front + back, E.164-ish
+  phone), Comrade replies render Markdown (`react-markdown`), optimistic user message +
+  typewriter reveal (`ChatMessage.tsx`).
+- **Server-side safety floor** (`intelligence/analysis.py`): a credible `self_harm` /
+  `suicidal_ideation` / `abuse` category score forces overall risk to at least
+  `enforced_overall` **before** the level is derived — an under-scored aggregate can no
+  longer mask acute risk (prompt guidance is now a code guarantee). Protective factors
+  never lower risk (they only move the wellness score). Thresholds live in
+  `platform_config.safety_floors` (DB-first, code fallback) — tunable from Admin with no deploy.
+- **Hinglish hard/soft tripwire** (`ai/safety.py`): patterns restructured to
+  category→severity→regex across 8 categories with English + romanized-Hindi + misspellings.
+  **Hard** (explicit) trips the instant counselor tripwire; **soft** (hyperbole-prone, e.g.
+  "sab khatam") is logged as `safety_soft_signal:*` but never alerts — the LLM (which sees the
+  raw text) weighs it. Explicit violence now also trips. `detect_safety_events` back-compat kept.
+- **Counselor review UI** (`RiskQueue.tsx`): surfaces AI contributors (top risk categories),
+  confidence %, and an "Inconclusive" badge (confidence below `min_confidence`); shows the
+  response SLA per level and an emergency-escalation checklist for critical.
+- **Verdict capture** (migration 014, all-nullable / backward compatible): new
+  `counselor_risk_level` / `verdict` (agree|disagree) / `outcome` on `risk_assessments`
+  (comments reuse `resolution_note`). Counselors record their own level + outcome on resolve,
+  building an AI-vs-human labeled dataset from day one (audit-logged with structured details).
+  `RiskReviewUpdate` extended (only `review_status` required); `RiskQueueItem` gains
+  `confidence`/`inconclusive`.
+- **Non-diagnostic disclaimer** (`Disclaimer.tsx`) on login + student/parent/counselor/school
+  dashboards; **SLA + escalation** single source of truth in `src/lib/risk-sla.ts` and
+  `docs/safety-sla-and-escalation.md`.
+
 ### July 11, 2026 — Phase 7: Production-MVP Polish (12h check-in windows, persistent activities, parent dashboard v4)
 - **Check-in v2**: 12-hour UTC windows (AM/PM); mandatory modal when the window has no
   check-in; max 2 submissions per window (initial + one update, both stored as rows,

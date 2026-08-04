@@ -517,6 +517,8 @@ export interface RiskQueueItem {
   risk_level: string;
   risk_score: number | null;
   categories: Record<string, number> | null;
+  confidence: number | null;
+  inconclusive: boolean;
   summary: string | null;
   trigger_reason: string | null;
   generated_by: string | null;
@@ -528,8 +530,20 @@ export interface RiskQueueListResponse {
   total: number;
 }
 
+export type RiskOutcome =
+  | 'no_action_needed'
+  | 'monitoring'
+  | 'counseling_scheduled'
+  | 'parent_contacted'
+  | 'escalated'
+  | 'referred_external'
+  | 'false_positive';
+
 export interface RiskReviewUpdate {
   review_status: 'acknowledged' | 'resolved';
+  verdict?: 'agree' | 'disagree' | null;
+  counselor_risk_level?: 'green' | 'yellow' | 'red' | 'critical' | null;
+  outcome?: RiskOutcome | null;
   note?: string | null;
 }
 

@@ -8,11 +8,12 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import require_role
 from app.admin.schemas import (
+    AdminUserListResponse,
     AIRouteListResponse,
     AIRouteResponse,
     AIRouteUpdate,
@@ -58,6 +59,7 @@ from app.admin.service import (
     get_platform_config,
     get_tenant_detail,
     list_ai_routes,
+    list_all_users,
     list_audit_logs,
     list_counselors,
     list_platform_config,
@@ -66,6 +68,7 @@ from app.admin.service import (
     list_tenants,
     run_playground,
     set_tenant_subscription,
+    soft_delete_user,
     update_ai_route,
     update_platform_config,
     update_counselor,
@@ -92,38 +95,51 @@ AdminUser = Annotated[User, Depends(require_role("admin"))]
     response_model=TenantListResponse,
     dependencies=[Depends(require_role("admin"))],
 )
-async def get_tenants(db: Annotated[AsyncSession, Depends(get_db)]):
-    """List all tenants. Platform admin only."""
-    tenants, total = await list_tenants(db)
-    return TenantListResponse(tenants=tenants, total=total)
+async def get_tenants(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None, max_length=255),
+    status: str | None = Query(None, pattern=r"^(active|inactive|suspended|trial|archived)$"),
+    include_archived: bool = Query(False),
+):
+    """List schools with search/status filters. Platform admin only."""
+    tenants, total = await list_tenants(
+        db, page, page_size,
+        search=search, status_filter=status,
+        include_archived=include_archived or status == "archived",
+    )
+    return TenantListResponse(tenants=tenants, total=total, page=page, page_size=page_size)
 
 
 @router.post(
     "/tenants",
     response_model=TenantResponse,
     status_code=201,
-    dependencies=[Depends(require_role("admin"))],
 )
 async def create_new_tenant(
     payload: TenantCreate,
+    admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Create a new tenant (school/organization). Platform admin only."""
-    return await create_tenant(db, payload)
+    return await create_tenant(db, payload, admin_user.user_id, request)
 
 
 @router.put(
     "/tenants/{tenant_id}",
     response_model=TenantResponse,
-    dependencies=[Depends(require_role("admin"))],
 )
 async def update_tenant_endpoint(
     tenant_id: uuid.UUID,
     payload: TenantUpdate,
+    admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Update a tenant. Platform admin only."""
-    return await update_tenant(db, tenant_id, payload)
+    """Update a tenant (incl. suspend/activate via status). Platform admin only."""
+    return await update_tenant(db, tenant_id, payload, admin_user.user_id, request)
 
 
 @router.get(
@@ -214,47 +230,89 @@ async def break_glass_messages(
 @router.delete(
     "/tenants/{tenant_id}",
     status_code=204,
-    dependencies=[Depends(require_role("admin"))],
 )
 async def remove_tenant(
     tenant_id: uuid.UUID,
+    admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Delete a school/tenant (cascades to its users + data). Platform admin only."""
-    await delete_tenant(db, tenant_id)
+    """Archive (soft-delete) a school. Data is retained; access is blocked.
+    Platform admin only."""
+    await delete_tenant(db, tenant_id, admin_user.user_id, request)
 
 
 # -------------------------------------------------------------------
 # Staff Users
 # -------------------------------------------------------------------
 
+@router.get(
+    "/users",
+    response_model=AdminUserListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_all_users(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    role: str | None = Query(None, pattern=r"^(student|parent|counselor|school_admin|admin)$"),
+    search: str | None = Query(None, max_length=255),
+    tenant_id: uuid.UUID | None = Query(None),
+    status: str | None = Query(None, pattern=r"^(active|inactive|deleted)$"),
+):
+    """Cross-tenant user list with role/school/status filters and name/email search.
+    Includes suspended and soft-deleted users. Platform admin only."""
+    users, total = await list_all_users(
+        db, page, page_size,
+        role=role, search=search, tenant_id=tenant_id, status_filter=status,
+    )
+    return AdminUserListResponse(users=users, total=total, page=page, page_size=page_size)
+
+
 @router.post(
     "/users",
     response_model=StaffUserResponse,
     status_code=201,
-    dependencies=[Depends(require_role("admin"))],
 )
 async def create_staff_account(
     payload: StaffUserCreate,
+    admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Create a counselor or school_admin account for a tenant. Platform admin only.
     Staff roles cannot self-register via /auth/signup."""
-    return await create_staff_user(db, payload)
+    return await create_staff_user(db, payload, admin_user.user_id, request)
 
 
 @router.patch(
     "/users/{user_id}",
     response_model=StaffUserResponse,
-    dependencies=[Depends(require_role("admin"))],
 )
 async def update_user(
     user_id: uuid.UUID,
     payload: UserAdminUpdate,
+    admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Disable/enable a user or reset their password. Platform admin only."""
-    return await update_user_admin(db, user_id, payload)
+    """Disable/enable a user, reset their password, or edit profile basics.
+    Platform admin only."""
+    return await update_user_admin(db, user_id, payload, admin_user.user_id, request)
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=204,
+)
+async def remove_user(
+    user_id: uuid.UUID,
+    admin_user: AdminUser,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Soft-delete a user (blocks login, keeps the record). Platform admin only."""
+    await soft_delete_user(db, user_id, admin_user.user_id, request)
 
 
 # -------------------------------------------------------------------

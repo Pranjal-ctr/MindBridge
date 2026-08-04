@@ -559,6 +559,12 @@ class RiskAssessment(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("counselor_profiles.counselor_id", ondelete="SET NULL")
     )
     resolution_note: Mapped[Optional[str]] = mapped_column(Text)
+    # Counselor verdict capture (migration 014) -- the labeled-data layer.
+    # `risk_level` above is the AI's level; these record the human's judgment so
+    # AI-vs-counselor agreement can be measured and a gold dataset accumulated.
+    counselor_risk_level: Mapped[Optional[str]] = mapped_column(String(20))
+    verdict: Mapped[Optional[str]] = mapped_column(String(20))  # agree | disagree
+    outcome: Mapped[Optional[str]] = mapped_column(String(40))
 
     # Relationships
     student: Mapped[StudentProfile] = relationship(back_populates="risk_assessments")

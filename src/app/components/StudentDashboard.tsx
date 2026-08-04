@@ -8,6 +8,8 @@ import { useWellnessScore } from '../../hooks/useWellness';
 import { StudentOnboarding } from './StudentOnboarding';
 import { DailyCheckinModal } from './DailyCheckinModal';
 import { MoodCalendarModal } from './MoodCalendarModal';
+import { ChatMessage } from './ChatMessage';
+import { Disclaimer } from './Disclaimer';
 import api from '../../lib/api';
 import { MOOD_META, formatTime } from '../../lib/mood';
 import type { DailyCheckinStatusResponse, OnboardingResponse } from '../../lib/types';
@@ -53,7 +55,13 @@ export function StudentDashboard() {
 
   const [messageInput, setMessageInput] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Message id of the freshest AI reply — the only one that types itself out.
+  const [typingId, setTypingId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToEnd = useCallback(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
 
   // Auto-select the first conversation on load
   useEffect(() => {
@@ -93,7 +101,9 @@ export function StudentDashboard() {
     setMessageInput('');
 
     try {
-      await sendMessage(text);
+      const data = await sendMessage(text);
+      // Type out just this reply (not older messages or history loads).
+      setTypingId(data.ai_message.message_id);
       // Refetch conversations to pick up auto-generated titles
       refetchConversations();
       // The intelligence pipeline runs as a background task after the chat
@@ -417,25 +427,12 @@ export function StudentDashboard() {
             </>
           ) : (
             messages.map((msg) => (
-              <div
+              <ChatMessage
                 key={msg.message_id}
-                className={`flex ${msg.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {msg.sender_type !== 'user' && (
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1 mr-2">
-                    <Brain className="w-4 h-4 text-white" />
-                  </div>
-                )}
-                <div
-                  className={`max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 whitespace-pre-wrap ${
-                    msg.sender_type === 'user'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-foreground'
-                  }`}
-                >
-                  {msg.message_text}
-                </div>
-              </div>
+                message={msg}
+                typewriter={msg.message_id === typingId}
+                onGrow={scrollToEnd}
+              />
             ))
           )}
 
@@ -485,6 +482,9 @@ export function StudentDashboard() {
           <div className="mt-3 text-xs text-muted-foreground text-center">
             Your conversations are private and encrypted. Parents receive insights, not raw chats.
           </div>
+          <Disclaimer variant="short" className="mt-2 justify-center text-center" />
+
+
         </div>
       </div>
     </div>

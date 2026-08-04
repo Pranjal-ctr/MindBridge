@@ -14,7 +14,17 @@ from pydantic import BaseModel, EmailStr, Field
 # Tenants
 # -------------------------------------------------------------------
 
-class TenantCreate(BaseModel):
+class TenantProfileFields(BaseModel):
+    """School profile fields shared by create/update payloads."""
+    city: str | None = Field(None, max_length=100)
+    address: str | None = Field(None, max_length=2000)
+    contact_email: str | None = Field(None, max_length=255)
+    contact_phone: str | None = Field(None, max_length=30)
+    principal_name: str | None = Field(None, max_length=150)
+    logo_url: str | None = Field(None, max_length=500)
+
+
+class TenantCreate(TenantProfileFields):
     """Create a new tenant."""
     tenant_name: str = Field(..., max_length=255)
     tenant_type: str = Field(default="school", pattern=r"^(school|district|organization)$")
@@ -23,7 +33,7 @@ class TenantCreate(BaseModel):
     student_limit: int = Field(default=100, ge=1)
 
 
-class TenantUpdate(BaseModel):
+class TenantUpdate(TenantProfileFields):
     """Update tenant fields."""
     tenant_name: str | None = Field(None, max_length=255)
     status: str | None = Field(None, pattern=r"^(active|inactive|suspended|trial)$")
@@ -41,6 +51,13 @@ class TenantResponse(BaseModel):
     student_limit: int
     active_students: int
     status: str
+    city: str | None = None
+    address: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    principal_name: str | None = None
+    logo_url: str | None = None
+    deleted_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -49,6 +66,8 @@ class TenantResponse(BaseModel):
 class TenantListResponse(BaseModel):
     tenants: list[TenantResponse]
     total: int
+    page: int = 1
+    page_size: int = 20
 
 
 # -------------------------------------------------------------------
@@ -162,9 +181,37 @@ class StaffUserResponse(BaseModel):
 # -------------------------------------------------------------------
 
 class UserAdminUpdate(BaseModel):
-    """Platform admin toggles active status and/or resets a user's password."""
+    """Platform admin toggles active status, resets a password, or edits profile basics.
+    Email changes are deliberately excluded (uniqueness/auth implications — P1)."""
     is_active: bool | None = None
     new_password: str | None = Field(None, min_length=8, max_length=128)
+    first_name: str | None = Field(None, min_length=1, max_length=100)
+    last_name: str | None = Field(None, min_length=1, max_length=100)
+    phone: str | None = Field(None, max_length=20)
+
+
+class AdminUserRow(BaseModel):
+    """Cross-tenant user list row (includes suspended and soft-deleted users)."""
+    user_id: uuid.UUID
+    tenant_id: uuid.UUID
+    tenant_name: str | None = None
+    email: str
+    role: str
+    first_name: str
+    last_name: str
+    phone: str | None = None
+    profile_image: str | None = None
+    is_active: bool
+    deleted_at: datetime | None = None
+    last_login: datetime | None = None
+    created_at: datetime
+
+
+class AdminUserListResponse(BaseModel):
+    users: list[AdminUserRow]
+    total: int
+    page: int = 1
+    page_size: int = 20
 
 
 # -------------------------------------------------------------------

@@ -111,6 +111,22 @@ export function useMessages(conversationId: string | null) {
         sender_type: 'user',
       };
 
+      // Show the user's message immediately (optimistic) so it's visible while
+      // Comrade is thinking, instead of only appearing once the reply lands.
+      const tempId = `temp-${Date.now()}`;
+      const optimistic: MessageResponse = {
+        message_id: tempId,
+        conversation_id: conversationId,
+        sender_type: 'user',
+        sender_id: null,
+        message_text: messageText,
+        metadata: null,
+        token_count: null,
+        sentiment: null,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, optimistic]);
+
       setIsSending(true);
       try {
         const { data } = await api.post<SendMessageResponse>(
@@ -118,9 +134,17 @@ export function useMessages(conversationId: string | null) {
           payload
         );
 
-        // Add both user message and AI response to state
-        setMessages((prev) => [...prev, data.user_message, data.ai_message]);
+        // Swap the optimistic bubble for the server's user message + AI reply.
+        setMessages((prev) => [
+          ...prev.filter((m) => m.message_id !== tempId),
+          data.user_message,
+          data.ai_message,
+        ]);
         return data;
+      } catch (err) {
+        // Roll back the optimistic message if the send failed.
+        setMessages((prev) => prev.filter((m) => m.message_id !== tempId));
+        throw err;
       } finally {
         setIsSending(false);
       }

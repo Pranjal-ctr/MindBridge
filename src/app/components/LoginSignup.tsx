@@ -1,12 +1,26 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, User, School, Loader2, AlertCircle, Phone, KeyRound } from 'lucide-react';
 import { KioLogo } from './KioLogo';
+import { Disclaimer } from './Disclaimer';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { getDashboardRoute } from '../../lib/protected-route';
 import { googleClientId, googleEnabled, loadGoogleScript } from '../../lib/google';
 import type { AxiosError } from 'axios';
 import type { ApiError } from '../../lib/types';
+
+// A plausible phone: optional leading "+" then 7-15 digits (E.164 range).
+const PHONE_RE = /^\+?\d{7,15}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function phoneError(value: string): string | null {
+  const cleaned = value.replace(/[\s\-().]/g, '');
+  return PHONE_RE.test(cleaned) ? null : 'Enter a valid mobile number.';
+}
+
+function emailError(value: string): string | null {
+  return EMAIL_RE.test(value.trim()) ? null : 'Enter a valid email address.';
+}
 
 export function LoginSignup() {
   const navigate = useNavigate();
@@ -24,6 +38,7 @@ export function LoginSignup() {
   const [inviteCode, setInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; phone?: string }>({});
 
   // Google "complete your profile" step (new Google users need mobile + institution code)
   const [googleRegToken, setGoogleRegToken] = useState<string | null>(null);
@@ -92,6 +107,14 @@ export function LoginSignup() {
     e.preventDefault();
     if (!googleRegToken) return;
     setError(null);
+
+    const pErr = phoneError(phone);
+    if (pErr) {
+      setFieldErrors({ phone: pErr });
+      return;
+    }
+    setFieldErrors({});
+
     setIsLoading(true);
     try {
       const user = await completeGoogleSignup({
@@ -113,6 +136,21 @@ export function LoginSignup() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    // Validate email + mobile format on signup before hitting the API.
+    if (isSignup) {
+      const errs: { email?: string; phone?: string } = {};
+      const eErr = emailError(email);
+      if (eErr) errs.email = eErr;
+      const pErr = phoneError(phone);
+      if (pErr) errs.phone = pErr;
+      if (Object.keys(errs).length > 0) {
+        setFieldErrors(errs);
+        return;
+      }
+    }
+    setFieldErrors({});
+
     setIsLoading(true);
 
     try {
@@ -234,11 +272,15 @@ export function LoginSignup() {
                       type="tel"
                       required
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => { setPhone(e.target.value); if (fieldErrors.phone) setFieldErrors((p) => ({ ...p, phone: undefined })); }}
+                      onBlur={(e) => setFieldErrors((p) => ({ ...p, phone: phoneError(e.target.value) ?? undefined }))}
                       placeholder="Your mobile number"
-                      className="w-full pl-11 pr-4 py-3 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-ring bg-input-background"
+                      className={`w-full pl-11 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 bg-input-background ${
+                        fieldErrors.phone ? 'border-red-400 focus:ring-red-300' : 'border-border focus:ring-ring'
+                      }`}
                     />
                   </div>
+                  {fieldErrors.phone && <p className="mt-1.5 text-xs text-red-600">{fieldErrors.phone}</p>}
                 </div>
 
                 <div>
@@ -418,12 +460,16 @@ export function LoginSignup() {
                     <input
                       type="tel"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="Enter your phone number"
-                      className="w-full pl-11 pr-4 py-3 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-ring bg-input-background"
+                      onChange={(e) => { setPhone(e.target.value); if (fieldErrors.phone) setFieldErrors((p) => ({ ...p, phone: undefined })); }}
+                      onBlur={(e) => setFieldErrors((p) => ({ ...p, phone: phoneError(e.target.value) ?? undefined }))}
+                      placeholder="Your mobile number"
+                      className={`w-full pl-11 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 bg-input-background ${
+                        fieldErrors.phone ? 'border-red-400 focus:ring-red-300' : 'border-border focus:ring-ring'
+                      }`}
                       required
                     />
                   </div>
+                  {fieldErrors.phone && <p className="mt-1.5 text-xs text-red-600">{fieldErrors.phone}</p>}
                 </div>
               )}
 
@@ -453,12 +499,16 @@ export function LoginSignup() {
                   <input
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { setEmail(e.target.value); if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: undefined })); }}
+                    onBlur={(e) => { if (isSignup) setFieldErrors((p) => ({ ...p, email: emailError(e.target.value) ?? undefined })); }}
                     placeholder="Enter your email"
-                    className="w-full pl-11 pr-4 py-3 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-ring bg-input-background"
+                    className={`w-full pl-11 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 bg-input-background ${
+                      fieldErrors.email ? 'border-red-400 focus:ring-red-300' : 'border-border focus:ring-ring'
+                    }`}
                     required
                   />
                 </div>
+                {fieldErrors.email && <p className="mt-1.5 text-xs text-red-600">{fieldErrors.email}</p>}
               </div>
 
               <div>
@@ -574,6 +624,8 @@ export function LoginSignup() {
             Contact Support
           </a>
         </div>
+
+        <Disclaimer variant="short" className="mt-4 justify-center text-center" />
       </div>
     </div>
   );

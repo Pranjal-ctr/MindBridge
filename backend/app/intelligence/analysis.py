@@ -52,6 +52,31 @@ class AnalysisOutcome:
     new_profile_level: str
 
 
+def _apply_safety_floor(analysis: MessageAnalysis, floors: dict) -> bool:
+    """Force overall risk to at least `enforced_overall` when a credible acute
+    category signal is present.
+
+    The prompt already tells the model "self-harm => risk >= 70", but a prompt
+    is guidance, not a guarantee. This is the deterministic backstop: if the
+    model reports a high self-harm/suicidal/abuse category yet a low `overall`,
+    we raise `overall` so an under-scored aggregate can never mask acute risk.
+    Protective factors never lower it -- risk is a floor, not an average.
+
+    Returns True when the floor changed the score (for auditability).
+    """
+    cats = analysis.risk.categories or {}
+    enforced = float(floors["enforced_overall"])
+    tripped = (
+        cats.get("self_harm", 0) >= float(floors["self_harm"])
+        or cats.get("suicidal_ideation", 0) >= float(floors["suicidal_ideation"])
+        or cats.get("abuse", 0) >= float(floors["abuse"])
+    )
+    if tripped and analysis.risk.overall < enforced:
+        analysis.risk.overall = enforced
+        return True
+    return False
+
+
 async def _build_analysis_input(
     db: AsyncSession,
     conversation_id: uuid.UUID,
@@ -195,6 +220,7 @@ async def run_message_analysis(
     analysis_cfg = await load_config(db, "analysis")
     bands = await load_config(db, "risk_level_bands")
     crisis_cfg = await load_config(db, "crisis")
+    floors = await load_config(db, "safety_floors")
 
     system_prompt, prompt_version = await load_prompt(
         db, ANALYSIS_PROMPT_NAME, ANALYSIS_SYSTEM_PROMPT, ANALYSIS_PROMPT_VERSION
@@ -216,7 +242,15 @@ async def run_message_analysis(
     )
 
     analysis = MessageAnalysis.model_validate(parse_json_response(text))
+
+    # Deterministic safety backstop BEFORE deriving the level, so a credible
+    # self-harm/abuse signal can never be masked by a low aggregate score.
+    floor_applied = _apply_safety_floor(analysis, floors)
     derived_level = derive_risk_level(analysis.risk.overall, bands)
+
+    trigger_reason = f"AI conversation analysis (prompt {prompt_version})"
+    if floor_applied:
+        trigger_reason += " + safety floor applied"
 
     # 1. Risk assessment (append-only history)
     assessment = RiskAssessment(
@@ -228,7 +262,7 @@ async def run_message_analysis(
         categories=analysis.risk.categories,
         confidence=round(analysis.risk.confidence, 2),
         summary=analysis.risk.summary or None,
-        trigger_reason=f"AI conversation analysis (prompt {prompt_version})",
+        trigger_reason=trigger_reason,
         generated_by="ai_pipeline",
     )
     db.add(assessment)
