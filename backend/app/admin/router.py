@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import require_role
 from app.admin.schemas import (
+    AdminRiskDetail,
+    AdminRiskListResponse,
     AdminUserListResponse,
     AIRouteListResponse,
     AIRouteResponse,
@@ -47,6 +49,8 @@ from app.admin.schemas import (
 )
 from app.admin.service import (
     activate_prompt,
+    get_admin_risk_detail,
+    list_admin_risk,
     break_glass_get_messages,
     break_glass_list_conversations,
     create_counselor,
@@ -562,3 +566,46 @@ async def export_audit_logs(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# -------------------------------------------------------------------
+# Cross-tenant risk oversight
+# -------------------------------------------------------------------
+# /risk/queue is tenant-scoped to the caller, so a platform admin hitting it
+# sees their own (empty) queue. These give the across-schools view instead.
+# Read-only: recording a verdict stays with the counselor who owns the case.
+
+@router.get(
+    "/risk",
+    response_model=AdminRiskListResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_admin_risk_list(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    review_status: str | None = Query(None, max_length=20),
+    risk_level: str | None = Query(None, max_length=20),
+    tenant_id: uuid.UUID | None = Query(None),
+):
+    """Risk assessments across every school, most severe then oldest first."""
+    items, total = await list_admin_risk(
+        db, page, page_size,
+        review_status=review_status, risk_level=risk_level, tenant_id=tenant_id,
+    )
+    return AdminRiskListResponse(
+        items=items, total=total, page=page, page_size=page_size
+    )
+
+
+@router.get(
+    "/risk/{risk_id}",
+    response_model=AdminRiskDetail,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_admin_risk(
+    risk_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """One assessment in full, including the counselor's recorded verdict."""
+    return await get_admin_risk_detail(db, risk_id)

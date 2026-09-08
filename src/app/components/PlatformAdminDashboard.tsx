@@ -151,9 +151,8 @@ export function PlatformAdminDashboard() {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition ${
-                tab === t.id ? 'bg-primary text-white' : 'bg-white border border-border text-muted-foreground hover:border-primary/50'
-              }`}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition ${tab === t.id ? 'bg-primary text-white' : 'bg-white border border-border text-muted-foreground hover:border-primary/50'
+                }`}
             >
               <t.icon className="w-4 h-4" /> {t.label}
             </button>
@@ -252,9 +251,8 @@ function SchoolsTab() {
                 <td className="px-4 py-3 capitalize">{t.subscription_plan}</td>
                 <td className="px-4 py-3">{t.student_limit}</td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    t.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                  }`}>{t.status}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                    }`}>{t.status}</span>
                 </td>
               </tr>
             ))}
@@ -463,7 +461,7 @@ function SchoolDetail({
                 </select>
               </div>
               <div>
-                <label className="font-medium block mb-1">Amount (USD)</label>
+                <label className="font-medium block mb-1">Amount (INR)</label>
                 <input type="number" min={0} step="0.01" value={subForm.amount}
                   onChange={(e) => setSubForm({ ...subForm, amount: parseFloat(e.target.value) || 0 })}
                   className="w-full px-3 py-2 border border-border rounded-xl bg-input-background" />
@@ -615,11 +613,10 @@ function ChatAccessTab() {
                 <button
                   key={c.conversation_id}
                   onClick={() => loadMessages(c.conversation_id)}
-                  className={`w-full text-left p-3 rounded-xl border text-sm transition ${
-                    activeConv === c.conversation_id
+                  className={`w-full text-left p-3 rounded-xl border text-sm transition ${activeConv === c.conversation_id
                       ? 'border-primary bg-blue-50'
                       : 'border-border hover:border-primary/50'
-                  }`}
+                    }`}
                 >
                   <p className="font-medium truncate">{c.title ?? 'Untitled'}</p>
                   <p className="text-xs text-muted-foreground">{c.total_messages} messages</p>
@@ -642,11 +639,10 @@ function ChatAccessTab() {
                 {messages.map((m) => (
                   <div
                     key={m.message_id}
-                    className={`p-3 rounded-xl text-sm max-w-[85%] ${
-                      m.sender_type === 'user'
+                    className={`p-3 rounded-xl text-sm max-w-[85%] ${m.sender_type === 'user'
                         ? 'bg-blue-50 ml-auto'
                         : 'bg-slate-50'
-                    }`}
+                      }`}
                   >
                     <p className="text-xs font-medium text-muted-foreground mb-1">
                       {m.sender_type === 'user' ? 'Student' : 'Comrade AI'} ·{' '}

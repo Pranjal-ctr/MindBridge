@@ -167,7 +167,12 @@ async def test_suspended_school_blocks_signup_and_login(
         "first_name": "New",
         "last_name": "Student",
         "role": "student",
+        "phone": "9876543210",  # required by SignupRequest; omitting it 422s
+                                # before the suspension check is ever reached
         "school_code": school["school_code"],
+        "date_of_birth": "2000-01-01",
+        "accept_terms": True,
+        "accept_privacy": True,
     })
     assert resp.status_code == 403
 

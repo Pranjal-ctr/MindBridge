@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../lib/auth-context';
 import { KioLogo } from '../KioLogo';
+import { NotificationBell } from '../NotificationBell';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import {
@@ -156,6 +157,9 @@ export function AdminLayout() {
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-5" />
           <span className="text-sm font-medium">{currentSectionLabel(location.pathname)}</span>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         <main className="flex-1 space-y-6 p-4 md:p-6">
           <Outlet />

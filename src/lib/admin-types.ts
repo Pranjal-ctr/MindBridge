@@ -192,3 +192,175 @@ export interface AuditLogFilters {
   date_from?: string;
   date_to?: string;
 }
+
+// ── Platform Analytics ────────────────────────────────────────────────
+
+export interface PlatformAnalytics {
+  total_schools: number;
+  total_students: number;
+  total_parents: number;
+  total_counselors: number;
+  /** Signed in within the last 30 days. */
+  active_users: number;
+  ai_requests: number;
+  ai_cost_usd: number;
+  conversation_count: number;
+  revenue_usd: number;
+}
+
+// ── Counselors ────────────────────────────────────────────────────────
+
+export interface CounselorAdmin {
+  counselor_id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  bio: string | null;
+  qualification: string | null;
+  specializations: string[];
+  languages: string[];
+  experience_years: number | null;
+  rating: number | null;
+  /** Credentials checked by a platform admin. Gates the public directory. */
+  is_verified: boolean;
+  is_available: boolean;
+  is_active: boolean;
+}
+
+export interface CounselorListResponse {
+  counselors: CounselorAdmin[];
+  total: number;
+}
+
+export interface CounselorCreatePayload {
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  phone?: string;
+  qualification?: string;
+  bio?: string;
+  specializations?: string[];
+  languages?: string[];
+  experience_years?: number;
+}
+
+export interface CounselorAdminUpdatePayload {
+  qualification?: string;
+  bio?: string;
+  specializations?: string[];
+  languages?: string[];
+  experience_years?: number;
+  is_verified?: boolean;
+  is_available?: boolean;
+  is_active?: boolean;
+}
+
+// ── Risk oversight (cross-tenant) ─────────────────────────────────────
+
+export interface AdminRiskRow {
+  risk_id: string;
+  student_id: string;
+  student_name: string;
+  tenant_id: string;
+  school_name: string;
+  risk_level: 'green' | 'yellow' | 'red' | 'critical';
+  risk_score: number | null;
+  confidence: number | null;
+  review_status: string | null;
+  assigned_counselor_id: string | null;
+  assigned_counselor_name: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  generated_by: string | null;
+  created_at: string;
+  /** Server-computed so SLA flags don't depend on the browser's clock. */
+  age_hours: number;
+}
+
+export interface AdminRiskListResponse {
+  items: AdminRiskRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AdminRiskDetail extends AdminRiskRow {
+  categories: Record<string, number> | null;
+  summary: string | null;
+  trigger_reason: string | null;
+  resolution_note: string | null;
+  counselor_risk_level: string | null;
+  verdict: string | null;
+  outcome: string | null;
+}
+
+export interface AdminRiskFilters {
+  review_status?: string;
+  risk_level?: string;
+  tenant_id?: string;
+}
+
+// ── AI control ────────────────────────────────────────────────────────
+
+export interface AIRoute {
+  feature_name: string;
+  primary_provider: string;
+  primary_model: string;
+  fallback_provider: string | null;
+  fallback_model: string | null;
+  max_retries: number;
+  is_active: boolean;
+}
+
+export interface AIRouteListResponse {
+  routes: AIRoute[];
+}
+
+export interface AIRouteUpdatePayload {
+  primary_provider?: string;
+  primary_model?: string;
+  fallback_provider?: string | null;
+  fallback_model?: string | null;
+  max_retries?: number;
+  is_active?: boolean;
+}
+
+export interface AIProviderConfig {
+  provider_name: string;
+  display_name: string;
+  is_enabled: boolean;
+  default_model: string;
+}
+
+export interface AIProviderListResponse {
+  providers: AIProviderConfig[];
+}
+
+export interface PromptVersion {
+  prompt_id: string;
+  prompt_name: string;
+  prompt_version: string;
+  prompt_content: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PromptListResponse {
+  prompts: PromptVersion[];
+}
+
+// ── Platform config (Settings) ────────────────────────────────────────
+
+export interface PlatformConfigEntry {
+  config_key: string;
+  config_value: Record<string, unknown>;
+  description: string | null;
+  /** "database" = overridden here; "default" = still the code fallback. */
+  source: 'database' | 'default';
+}
+
+export interface PlatformConfigListResponse {
+  configs: PlatformConfigEntry[];
+}

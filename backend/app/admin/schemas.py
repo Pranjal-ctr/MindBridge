@@ -437,3 +437,58 @@ class PlatformConfigListResponse(BaseModel):
 
 class PlatformConfigUpdate(BaseModel):
     config_value: dict
+
+
+# -------------------------------------------------------------------
+# Cross-tenant risk oversight (platform admin)
+# -------------------------------------------------------------------
+# Read-only by design. Reviewing an assessment — recording a verdict, an
+# outcome, a resolution — is a clinical judgment that belongs to the counselor
+# who owns the case, and PATCH /risk/queue/{risk_id} already does it inside a
+# single tenant. What the platform admin lacks is the view ACROSS schools:
+# which queues are backing up, what is aging past SLA, which schools have
+# nobody assigned. That is what these two endpoints provide.
+
+class AdminRiskRow(BaseModel):
+    """One assessment in the cross-tenant oversight list."""
+    risk_id: uuid.UUID
+    student_id: uuid.UUID
+    student_name: str
+    tenant_id: uuid.UUID
+    school_name: str
+    risk_level: str
+    risk_score: float | None = None
+    confidence: float | None = None
+    review_status: str | None = None
+    assigned_counselor_id: uuid.UUID | None = None
+    assigned_counselor_name: str | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: datetime | None = None
+    generated_by: str | None = None
+    created_at: datetime
+    # Hours since creation — lets the UI flag SLA breaches without re-deriving
+    # "now" client-side, where a wrong clock would silently mis-flag rows.
+    age_hours: float
+
+
+class AdminRiskListResponse(BaseModel):
+    items: list[AdminRiskRow]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminRiskDetail(AdminRiskRow):
+    """Full assessment record for the detail view.
+
+    `summary` and `categories` are the AI's assessment, not student message
+    content — the raw conversation stays behind the separate, audit-logged
+    break-glass endpoint.
+    """
+    categories: dict | None = None
+    summary: str | None = None
+    trigger_reason: str | None = None
+    resolution_note: str | None = None
+    counselor_risk_level: str | None = None
+    verdict: str | None = None
+    outcome: str | None = None

@@ -18,6 +18,21 @@ import type {
   TenantUpdatePayload,
   TenantUserListResponse,
   UserAdminUpdatePayload,
+  AdminRiskDetail,
+  AdminRiskFilters,
+  AdminRiskListResponse,
+  AIProviderListResponse,
+  AIRoute,
+  AIRouteListResponse,
+  AIRouteUpdatePayload,
+  CounselorAdmin,
+  CounselorAdminUpdatePayload,
+  CounselorCreatePayload,
+  CounselorListResponse,
+  PlatformAnalytics,
+  PlatformConfigEntry,
+  PlatformConfigListResponse,
+  PromptListResponse,
 } from './admin-types';
 
 // ── Schools ───────────────────────────────────────────────────────────
@@ -140,4 +155,102 @@ export function downloadBlob(blob: Blob, filename: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── Platform analytics ────────────────────────────────────────────────
+
+export async function getPlatformAnalytics(): Promise<PlatformAnalytics> {
+  const { data } = await api.get<PlatformAnalytics>('/admin/analytics/platform');
+  return data;
+}
+
+// ── Counselors ────────────────────────────────────────────────────────
+
+export async function listCounselors(): Promise<CounselorListResponse> {
+  const { data } = await api.get<CounselorListResponse>('/admin/counselors');
+  return data;
+}
+
+export async function createCounselor(
+  payload: CounselorCreatePayload,
+): Promise<CounselorAdmin> {
+  const { data } = await api.post<CounselorAdmin>('/admin/counselors', payload);
+  return data;
+}
+
+export async function updateCounselor(
+  counselorId: string,
+  payload: CounselorAdminUpdatePayload,
+): Promise<CounselorAdmin> {
+  const { data } = await api.patch<CounselorAdmin>(
+    `/admin/counselors/${counselorId}`,
+    payload,
+  );
+  return data;
+}
+
+// ── Risk oversight ────────────────────────────────────────────────────
+// Read-only across tenants. Recording a verdict stays with the counselor who
+// owns the case (PATCH /risk/queue/{id}), so there is no admin mutation here.
+
+export async function listAdminRisk(
+  page: number,
+  pageSize: number,
+  filters: AdminRiskFilters = {},
+): Promise<AdminRiskListResponse> {
+  const { data } = await api.get<AdminRiskListResponse>('/admin/risk', {
+    params: { page, page_size: pageSize, ...filters },
+  });
+  return data;
+}
+
+export async function getAdminRiskDetail(riskId: string): Promise<AdminRiskDetail> {
+  const { data } = await api.get<AdminRiskDetail>(`/admin/risk/${riskId}`);
+  return data;
+}
+
+// ── AI control ────────────────────────────────────────────────────────
+
+export async function listAIRoutes(): Promise<AIRouteListResponse> {
+  const { data } = await api.get<AIRouteListResponse>('/admin/ai/routes');
+  return data;
+}
+
+export async function updateAIRoute(
+  featureName: string,
+  payload: AIRouteUpdatePayload,
+): Promise<AIRoute> {
+  const { data } = await api.patch<AIRoute>(`/admin/ai/routes/${featureName}`, payload);
+  return data;
+}
+
+export async function listAIProviders(): Promise<AIProviderListResponse> {
+  const { data } = await api.get<AIProviderListResponse>('/admin/ai/providers');
+  return data;
+}
+
+export async function listPrompts(): Promise<PromptListResponse> {
+  const { data } = await api.get<PromptListResponse>('/admin/prompts');
+  return data;
+}
+
+export async function activatePrompt(promptId: string): Promise<void> {
+  await api.patch(`/admin/prompts/${promptId}/activate`);
+}
+
+// ── Platform config ───────────────────────────────────────────────────
+
+export async function listPlatformConfig(): Promise<PlatformConfigListResponse> {
+  const { data } = await api.get<PlatformConfigListResponse>('/admin/config');
+  return data;
+}
+
+export async function updatePlatformConfig(
+  configKey: string,
+  configValue: Record<string, unknown>,
+): Promise<PlatformConfigEntry> {
+  const { data } = await api.put<PlatformConfigEntry>(`/admin/config/${configKey}`, {
+    config_value: configValue,
+  });
+  return data;
 }

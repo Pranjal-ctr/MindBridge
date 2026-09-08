@@ -8,11 +8,14 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_audit
 from app.admin.schemas import (
+    AdminRiskDetail,
+    AdminRiskRow,
     AdminUserListResponse,
     AdminUserRow,
     AIRouteListResponse,
@@ -58,6 +61,7 @@ from database.models import (
     Message,
     ParentProfile,
     PlatformConfig,
+    RiskAssessment,
     StudentProfile,
     Subscription,
     Tenant,
@@ -1148,4 +1152,175 @@ async def update_platform_config(
         config_value=await load_config(db, config_key),
         description=row.description,
         source="database",
+    )
+
+
+# -------------------------------------------------------------------
+# Cross-tenant risk oversight
+# -------------------------------------------------------------------
+# /risk/queue scopes to the CALLER's tenant, so a platform admin calling it
+# sees their own (empty) queue rather than the platform. These functions are
+# the cross-tenant equivalent, and are deliberately read-only — see the note
+# on AdminRiskRow in schemas.py.
+
+# Most severe first: the ordering exists so an admin scanning the list sees
+# critical rows before low ones regardless of when they arrived.
+_ADMIN_LEVEL_SEVERITY = case(
+    {"critical": 4, "red": 3, "yellow": 2, "green": 1},
+    value=RiskAssessment.risk_level,
+    else_=0,
+)
+
+
+def _risk_base_query():
+    """Assessment joined to its student, school, assigned counselor and reviewer.
+
+    Two separate aliases of `users` are needed: one for the student behind the
+    assessment, one for whoever reviewed it. Without aliasing, SQLAlchemy would
+    collapse them into a single join and silently return the wrong names.
+    """
+    student_user = aliased(User, name="student_user")
+    counselor_user = aliased(User, name="counselor_user")
+    reviewer_user = aliased(User, name="reviewer_user")
+
+    query = (
+        select(
+            RiskAssessment,
+            student_user.first_name,
+            student_user.last_name,
+            Tenant.tenant_id,
+            Tenant.tenant_name,
+            counselor_user.first_name,
+            counselor_user.last_name,
+            reviewer_user.first_name,
+            reviewer_user.last_name,
+        )
+        .join(StudentProfile, RiskAssessment.student_id == StudentProfile.student_id)
+        .join(student_user, StudentProfile.user_id == student_user.user_id)
+        .join(Tenant, student_user.tenant_id == Tenant.tenant_id)
+        .outerjoin(
+            CounselorProfile,
+            CounselorProfile.counselor_id == RiskAssessment.assigned_counselor_id,
+        )
+        .outerjoin(counselor_user, CounselorProfile.user_id == counselor_user.user_id)
+        .outerjoin(reviewer_user, RiskAssessment.reviewed_by == reviewer_user.user_id)
+    )
+    return query, student_user
+
+
+def _full_name(first: str | None, last: str | None) -> str | None:
+    name = f"{first or ''} {last or ''}".strip()
+    return name or None
+
+
+def _risk_row_fields(row, now: datetime) -> dict:
+    """Shared field mapping for the list row and the detail record."""
+    (
+        assessment,
+        s_first, s_last,
+        tenant_id, school_name,
+        c_first, c_last,
+        r_first, r_last,
+    ) = row
+
+    created = assessment.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+
+    return {
+        "risk_id": assessment.risk_id,
+        "student_id": assessment.student_id,
+        "student_name": _full_name(s_first, s_last) or "Unknown",
+        "tenant_id": tenant_id,
+        "school_name": school_name,
+        "risk_level": assessment.risk_level,
+        "risk_score": float(assessment.risk_score) if assessment.risk_score is not None else None,
+        "confidence": float(assessment.confidence) if assessment.confidence is not None else None,
+        "review_status": assessment.review_status,
+        "assigned_counselor_id": assessment.assigned_counselor_id,
+        "assigned_counselor_name": _full_name(c_first, c_last),
+        "reviewed_by_name": _full_name(r_first, r_last),
+        "reviewed_at": assessment.reviewed_at,
+        "generated_by": assessment.generated_by,
+        "created_at": assessment.created_at,
+        "age_hours": round((now - created).total_seconds() / 3600, 1),
+    }
+
+
+async def list_admin_risk(
+    db: AsyncSession,
+    page: int,
+    page_size: int,
+    *,
+    review_status: str | None = None,
+    risk_level: str | None = None,
+    tenant_id: uuid.UUID | None = None,
+) -> tuple[list[AdminRiskRow], int]:
+    """Cross-tenant assessment list, most severe first then oldest.
+
+    Oldest-first within a severity tier is deliberate: the point of this view is
+    spotting what has been waiting too long, so the stalest row in a tier should
+    surface at the top, not the newest.
+    """
+    now = datetime.now(timezone.utc)
+    query, _student_user = _risk_base_query()
+
+    filters = []
+    if review_status:
+        filters.append(RiskAssessment.review_status == review_status)
+    if risk_level:
+        filters.append(RiskAssessment.risk_level == risk_level)
+    if tenant_id:
+        filters.append(Tenant.tenant_id == tenant_id)
+    if filters:
+        query = query.where(*filters)
+
+    count_query = (
+        select(func.count())
+        .select_from(RiskAssessment)
+        .join(StudentProfile, RiskAssessment.student_id == StudentProfile.student_id)
+        .join(User, StudentProfile.user_id == User.user_id)
+        .join(Tenant, User.tenant_id == Tenant.tenant_id)
+    )
+    if filters:
+        count_query = count_query.where(*filters)
+    total = (await db.execute(count_query)).scalar() or 0
+
+    rows = (
+        await db.execute(
+            query
+            .order_by(_ADMIN_LEVEL_SEVERITY.desc(), RiskAssessment.created_at.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+
+    return [AdminRiskRow(**_risk_row_fields(row, now)) for row in rows], total
+
+
+async def get_admin_risk_detail(db: AsyncSession, risk_id: uuid.UUID) -> AdminRiskDetail:
+    """One assessment in full, across tenants."""
+    now = datetime.now(timezone.utc)
+    query, _student_user = _risk_base_query()
+
+    row = (
+        await db.execute(query.where(RiskAssessment.risk_id == risk_id))
+    ).first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Risk assessment not found",
+        )
+
+    assessment = row[0]
+    return AdminRiskDetail(
+        **_risk_row_fields(row, now),
+        categories=assessment.categories,
+        summary=assessment.summary,
+        trigger_reason=assessment.trigger_reason,
+        resolution_note=assessment.resolution_note,
+        counselor_risk_level=assessment.counselor_risk_level,
+        verdict=assessment.verdict,
+        outcome=assessment.outcome,
     )
