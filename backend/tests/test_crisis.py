@@ -200,3 +200,105 @@ async def test_parent_notification_respects_school_setting(
         select(Notification).where(Notification.user_id == counselor.user_id)
     )).scalars().all()
     assert len(counselor_notes) == 1
+
+
+# -------------------------------------------------------------------
+# Staff email escalation
+# -------------------------------------------------------------------
+# An in-app notification only reaches staff who are already signed in and
+# looking at the queue. Out of school hours that is nobody, so the email is
+# the part of the path that actually reaches a human.
+
+@pytest.fixture
+def captured_emails(monkeypatch):
+    """Capture try_send calls at the crisis call site."""
+    sent: list[dict] = []
+
+    async def fake_try_send(*, to, subject, body, html=None):
+        sent.append({"to": to, "subject": subject, "body": body, "html": html})
+        return True
+
+    monkeypatch.setattr("app.email.service.try_send", fake_try_send)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_crisis_emails_staff(
+    db_session, crisis_setup, mock_ai, test_student_user, captured_emails
+):
+    profile, conversation, message, counselor, _parent = crisis_setup
+    outcome = await _high_risk_outcome(db_session, profile, conversation, message, mock_ai)
+
+    await evaluate_and_trigger_crisis(
+        db_session, profile.student_id, test_student_user.user_id, outcome
+    )
+
+    recipients = [e["to"] for e in captured_emails]
+    assert counselor.email in recipients
+
+
+@pytest.mark.asyncio
+async def test_crisis_email_carries_no_message_content(
+    db_session, crisis_setup, mock_ai, test_student_user, captured_emails
+):
+    """Email is the least controlled channel Kio uses — it forwards, it shows on
+    lock screens, it lands in shared school inboxes. The alert may name the
+    student and the tier, never what they said or which categories fired."""
+    profile, conversation, message, counselor, _parent = crisis_setup
+    outcome = await _high_risk_outcome(db_session, profile, conversation, message, mock_ai)
+
+    await evaluate_and_trigger_crisis(
+        db_session, profile.student_id, test_student_user.user_id, outcome
+    )
+
+    staff_mail = next(e for e in captured_emails if e["to"] == counselor.email)
+    blob = f"{staff_mail['subject']} {staff_mail['body']} {staff_mail['html'] or ''}".lower()
+
+    assert "hopeless" not in blob            # the student's own words
+    assert "self_harm" not in blob           # risk categories
+    # The subject must not name the student: it renders on a lock screen.
+    assert "test" not in staff_mail["subject"].lower()
+
+
+@pytest.mark.asyncio
+async def test_parents_are_not_emailed_by_default(
+    db_session, crisis_setup, mock_ai, test_student_user, captured_emails
+):
+    """Parents get the content-free in-app notification, but email is off by
+    default: it cannot be unsent and can out a student who has not chosen to
+    tell anyone. Turning it on is a product decision, not a default."""
+    profile, conversation, message, _counselor, parent_user = crisis_setup
+    outcome = await _high_risk_outcome(db_session, profile, conversation, message, mock_ai)
+
+    await evaluate_and_trigger_crisis(
+        db_session, profile.student_id, test_student_user.user_id, outcome
+    )
+
+    assert parent_user.email not in [e["to"] for e in captured_emails]
+    # ...but the in-app notification still fires.
+    parent_note = (await db_session.execute(
+        select(Notification).where(Notification.user_id == parent_user.user_id)
+    )).scalar_one()
+    assert "risk level has changed" in parent_note.message
+
+
+@pytest.mark.asyncio
+async def test_email_failure_does_not_break_the_queue_entry(
+    db_session, crisis_setup, mock_ai, test_student_user, monkeypatch
+):
+    """The queue entry is the part that must not be lost. A mail outage cannot
+    be allowed to swallow the assessment."""
+    async def exploding_try_send(**_kwargs):
+        raise RuntimeError("smtp is on fire")
+
+    monkeypatch.setattr("app.email.service.try_send", exploding_try_send)
+
+    profile, conversation, message, _counselor, _parent = crisis_setup
+    outcome = await _high_risk_outcome(db_session, profile, conversation, message, mock_ai)
+
+    triggered = await evaluate_and_trigger_crisis(
+        db_session, profile.student_id, test_student_user.user_id, outcome
+    )
+
+    assert triggered is True
+    assert outcome.assessment.review_status == "pending"

@@ -42,6 +42,17 @@ DEFAULTS: dict[str, dict] = {
         "notify_parents": True,
         "tripwire_level": "red",
         "deescalate_after": 3,
+        # Email staff (counselors + school admins) in addition to the in-app
+        # notification. Without this an acute alert only reaches someone who
+        # happens to already be signed in and looking at the risk queue.
+        "email_staff": True,
+        # Emailing a parent that their child's risk level changed is a
+        # different kind of act from an in-app badge: it lands in a shared
+        # inbox, cannot be unsent, and can out a student who has not chosen to
+        # tell anyone. Left OFF pending an explicit product decision — parents
+        # still get the content-free in-app notification and the refreshed
+        # insight either way.
+        "email_parents": False,
     },
     # Safety floors: a *credible* acute signal from the LLM forces the overall
     # risk to at least `enforced_overall`, so an under-scored `overall` can never

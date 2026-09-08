@@ -38,6 +38,44 @@ logger = logging.getLogger(__name__)
 _NOTIFY_SUPPRESSION_WINDOW = timedelta(hours=1)
 
 
+async def _email_staff_alert(
+    db: AsyncSession,
+    staff_ids: list[uuid.UUID],
+    student_name: str,
+    risk_level: str,
+) -> None:
+    """Email the on-call staff about a queued high-risk assessment.
+
+    An in-app notification only reaches someone already signed in and looking.
+    Email is what reaches a counselor who is not currently in Kio — which, out
+    of school hours, is all of them.
+
+    Best-effort throughout: `try_send` never raises, and this whole call is
+    wrapped by the caller. A mail outage must never stop the assessment from
+    being queued, which is the part that cannot be lost.
+    """
+    from app.config import settings
+    from app.email.service import try_send
+    from app.email.templates import crisis_alert_email
+
+    rows = (await db.execute(
+        select(User.email, User.first_name).where(User.user_id.in_(staff_ids))
+    )).all()
+
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/counselor"
+
+    for email, first_name in rows:
+        if not email:
+            continue
+        subject, text, html = crisis_alert_email(
+            staff_first_name=first_name or "",
+            student_name=student_name,
+            risk_level=risk_level,
+            link=link,
+        )
+        await try_send(to=email, subject=subject, body=text, html=html)
+
+
 async def _linked_parent_user_ids(db: AsyncSession, student_id: uuid.UUID) -> list[uuid.UUID]:
     result = await db.execute(
         select(ParentProfile.user_id)
@@ -117,15 +155,27 @@ async def evaluate_and_trigger_crisis(
                     )
                 )).all()
             ]
+            student_name = f"{student_user.first_name} {student_user.last_name}".strip()
+
             if staff_ids:
                 await notify_users(
                     db, staff_ids,
                     title="High-risk alert",
-                    message=(
-                        f"High-risk alert: {student_user.first_name} {student_user.last_name}"
-                        " -- review required."
-                    ),
+                    message=f"High-risk alert: {student_name} -- review required.",
                 )
+
+                # Email as well as in-app: the in-app badge only reaches staff
+                # who are already signed in. Non-fatal — the queue entry above
+                # is the durable part and must survive a mail failure.
+                if crisis_cfg.get("email_staff", True):
+                    try:
+                        await _email_staff_alert(
+                            db, staff_ids, student_name, assessment.risk_level
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "Crisis staff email failed (non-fatal): %s", str(e)
+                        )
 
             # Parents: content-free, gated by school settings + platform config
             if crisis_cfg.get("notify_parents", True):
