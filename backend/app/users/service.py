@@ -63,8 +63,23 @@ async def update_user_profile(
             detail="User not found",
         )
 
-    # Apply updates
+    # Apply updates. age/gender belong to the student profile, not the user row.
     update_data = payload.model_dump(exclude_unset=True)
+    student_fields = {
+        field: update_data.pop(field)
+        for field in ("age", "gender")
+        if field in update_data
+    }
+
+    if student_fields:
+        if user.student_profile is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Age and gender can only be set on student accounts.",
+            )
+        for field, value in student_fields.items():
+            setattr(user.student_profile, field, value)
+
     for field, value in update_data.items():
         setattr(user, field, value)
 

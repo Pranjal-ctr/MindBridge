@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom';
-import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, Mic, Calendar, Menu, X, Plus, Loader2, Trash2, Users, ClipboardCheck } from 'lucide-react';
+import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, Mic, Calendar, Menu, X, Plus, Loader2, Trash2, Users, ClipboardCheck, UserCircle } from 'lucide-react';
 import { KioLogo } from './KioLogo';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { useConversations, useMessages } from '../../hooks/useConversations';
 import { useWellnessScore } from '../../hooks/useWellness';
 import { StudentOnboarding } from './StudentOnboarding';
+import { NotificationBell } from './NotificationBell';
 import { DailyCheckinModal } from './DailyCheckinModal';
 import { MoodCalendarModal } from './MoodCalendarModal';
 import { ChatMessage } from './ChatMessage';
@@ -261,6 +262,10 @@ export function StudentDashboard() {
               <Users className="w-5 h-5" />
               <span className="text-sm">Family</span>
             </Link>
+            <Link to="/student/profile" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
+              <UserCircle className="w-5 h-5" />
+              <span className="text-sm">My Profile</span>
+            </Link>
           </nav>
 
           <div className="p-4 border-t border-sidebar-border space-y-2">
@@ -301,8 +306,11 @@ export function StudentDashboard() {
               {activeConversation?.title || 'AI Wellness Companion'}
             </h1>
           </div>
-          <div className="text-sm text-muted-foreground">
-            <span className="hidden sm:inline">Always here to listen • </span>Safe & Private
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-muted-foreground">
+              <span className="hidden sm:inline">Always here to listen • </span>Safe &amp; Private
+            </div>
+            <NotificationBell />
           </div>
         </header>
 

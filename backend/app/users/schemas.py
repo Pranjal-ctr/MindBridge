@@ -12,11 +12,21 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class UserUpdate(BaseModel):
-    """Updatable user fields."""
+    """
+    Updatable user fields.
+
+    `age` and `gender` live on student_profiles rather than users; they are
+    accepted here so a student can complete their own profile in one call, and
+    are rejected for roles that have no student profile.
+    """
     first_name: str | None = Field(None, max_length=100)
     last_name: str | None = Field(None, max_length=100)
     phone: str | None = Field(None, max_length=20)
     profile_image: str | None = None
+
+    # Student-profile fields
+    age: int | None = Field(None, ge=5, le=25, description="Student age (5-25)")
+    gender: str | None = Field(None, max_length=30)
 
 
 class UserProfileResponse(BaseModel):
