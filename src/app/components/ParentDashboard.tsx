@@ -7,9 +7,11 @@
  * the student — parents see the weekly aggregate instead.
  */
 
-import { TrendingUp, TrendingDown, Minus, Heart, AlertCircle, CheckCircle, Info, Calendar, Menu, X, Loader2, RefreshCw, Users, KeyRound, Sparkles, MessageCircle, Shield, HelpCircle, Lightbulb } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Heart, AlertCircle, CheckCircle, Info, Calendar, CalendarPlus, Menu, X, Loader2, RefreshCw, Users, KeyRound, Sparkles, MessageCircle, Shield, HelpCircle, Lightbulb } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { KioLogo } from './KioLogo';
 import { Disclaimer } from './Disclaimer';
+import { NotificationBell } from './NotificationBell';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../lib/auth-context';
@@ -281,7 +283,14 @@ export function ParentDashboard() {
             ))}
           </nav>
 
-          <div className="p-4 border-t border-sidebar-border">
+          <div className="p-4 border-t border-sidebar-border space-y-2">
+            <Link
+              to="/book-counselor"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-accent text-accent-foreground hover:bg-accent/90 transition text-sm"
+            >
+              <CalendarPlus className="w-4 h-4" />
+              Book a Counselor
+            </Link>
             <button
               onClick={logout}
               className="w-full flex items-center justify-center px-3 py-2 rounded-lg text-muted-foreground hover:bg-sidebar-accent transition text-sm"
@@ -326,6 +335,7 @@ export function ParentDashboard() {
               <span className="hidden sm:inline">Status: </span>
               {riskLevel === 'green' ? 'Good' : riskLevel === 'yellow' ? 'Caution' : 'Alert'}
             </div>
+            <NotificationBell />
           </div>
         </header>
 

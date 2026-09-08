@@ -126,8 +126,16 @@ class AvailabilityCreate(BaseModel):
 
 
 class BookRequest(BaseModel):
-    """Student books an open slot."""
+    """
+    Book an open slot.
+
+    Students book for themselves and leave `student_id` unset. Parents must name
+    which linked child the session is for.
+    """
     slot_id: uuid.UUID
+    student_id: uuid.UUID | None = Field(
+        None, description="Required for parents; ignored for students."
+    )
 
 
 class BookResponse(BaseModel):

@@ -1,12 +1,17 @@
-import { Link } from 'react-router-dom';
-import { Calendar, Users, FileText, AlertTriangle, TrendingUp, Clock, Menu, X, Loader2, Sparkles } from 'lucide-react';
+import { Calendar, Users, FileText, AlertTriangle, TrendingUp, Menu, X, Loader2, Sparkles } from 'lucide-react';
 import { KioLogo } from './KioLogo';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CounselorAvailability } from './CounselorAvailability';
+import { CounselorSessions } from './CounselorSessions';
+import { ScheduleSessionDialog } from './ScheduleSessionDialog';
 import { RiskQueue } from './RiskQueue';
+import { NotificationBell } from './NotificationBell';
 import { Disclaimer } from './Disclaimer';
 import api from '../../lib/api';
+import { listSessions, splitSessions } from '../../lib/counselor-api';
+import { useAuth } from '../../lib/auth-context';
 import type {
+  CounselorSession,
   CounselorStudentListResponse,
   CounselorStudentProfile,
   WeeklyReportResponse,
@@ -15,6 +20,39 @@ import type {
 export function CounselorDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [riskQueueCount, setRiskQueueCount] = useState(0);
+  const { user, logout } = useAuth();
+
+  const counselorName = user
+    ? `${user.first_name} ${user.last_name}`.trim() || user.email
+    : 'Counselor';
+
+  // In-page sections — the sidebar scrolls to these rather than routing away.
+  const studentsRef = useRef<HTMLDivElement>(null);
+  const sessionsRef = useRef<HTMLDivElement>(null);
+  const availabilityRef = useRef<HTMLDivElement>(null);
+  const riskRef = useRef<HTMLDivElement>(null);
+
+  const scrollTo = useCallback((ref: React.RefObject<HTMLDivElement | null>) => {
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setSidebarOpen(false);
+  }, []);
+
+  // Live sessions — owned here so the stat cards and the list share one fetch.
+  const [sessions, setSessions] = useState<CounselorSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
+  const loadSessions = useCallback(async () => {
+    try {
+      const data = await listSessions();
+      setSessions(data.sessions);
+    } catch {
+      setSessions([]);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, []);
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const [scheduleFor, setScheduleFor] = useState<CounselorStudentProfile | null>(null);
 
   // Live student roster
   const [students, setStudents] = useState<CounselorStudentProfile[]>([]);
@@ -50,11 +88,15 @@ export function CounselorDashboard() {
     }
   };
 
-  const upcomingSessions = [
-    { student: 'Sarah J.', time: '2:00 PM Today', risk: 'yellow', topic: 'Academic stress' },
-    { student: 'Mike T.', time: '3:30 PM Today', risk: 'green', topic: 'Follow-up session' },
-    { student: 'Emily R.', time: '10:00 AM Tomorrow', risk: 'red', topic: 'Urgent - Family issues' }
-  ];
+  // Stats derived from live data. There is no duration column on
+  // counselor_sessions, so "average session length" is deliberately not shown
+  // rather than estimated.
+  const { upcoming } = splitSessions(sessions);
+  const weekAhead = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const upcomingThisWeek = upcoming.filter(
+    (s) => new Date(s.scheduled_at).getTime() <= weekAhead
+  ).length;
+  const completedSessions = sessions.filter((s) => s.status === 'completed').length;
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -71,25 +113,37 @@ export function CounselorDashboard() {
               </button>
             </div>
             <div className="mt-3 px-3 py-2 bg-sidebar-accent rounded-lg">
-              <div className="text-sm font-medium">Dr. Jennifer Martinez</div>
-              <div className="text-xs text-muted-foreground">Licensed Counselor</div>
+              <div className="text-sm font-medium">{counselorName}</div>
+              <div className="text-xs text-muted-foreground">Counselor</div>
             </div>
           </div>
 
           <nav className="flex-1 p-4 space-y-2">
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <button
+              onClick={() => scrollTo(studentsRef)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition"
+            >
               <Users className="w-5 h-5" />
               <span>Students</span>
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
+            </button>
+            <button
+              onClick={() => scrollTo(availabilityRef)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition"
+            >
               <Calendar className="w-5 h-5" />
-              <span>Schedule</span>
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
+              <span>Availability</span>
+            </button>
+            <button
+              onClick={() => scrollTo(sessionsRef)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition"
+            >
               <FileText className="w-5 h-5" />
-              <span>Session Notes</span>
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
+              <span>Sessions &amp; Notes</span>
+            </button>
+            <button
+              onClick={() => scrollTo(riskRef)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition"
+            >
               <AlertTriangle className="w-5 h-5" />
               <span>Risk Alerts</span>
               {riskQueueCount > 0 && (
@@ -97,13 +151,16 @@ export function CounselorDashboard() {
                   {riskQueueCount}
                 </span>
               )}
-            </a>
+            </button>
           </nav>
 
           <div className="p-4 border-t border-sidebar-border">
-            <Link to="/" className="flex items-center justify-center px-3 py-2 rounded-lg text-muted-foreground hover:bg-sidebar-accent transition text-sm">
+            <button
+              onClick={logout}
+              className="w-full flex items-center justify-center px-3 py-2 rounded-lg text-muted-foreground hover:bg-sidebar-accent transition text-sm"
+            >
               Sign Out
-            </Link>
+            </button>
           </div>
         </div>
       </div>
@@ -118,14 +175,17 @@ export function CounselorDashboard() {
             </button>
             <h1 className="text-lg font-semibold">Counselor Dashboard</h1>
           </div>
-          {riskQueueCount > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full text-sm">
-              <AlertTriangle className="w-4 h-4" />
-              <span className="hidden sm:inline">
-                {riskQueueCount} Risk Alert{riskQueueCount === 1 ? '' : 's'}
-              </span>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {riskQueueCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full text-sm">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="hidden sm:inline">
+                  {riskQueueCount} Risk Alert{riskQueueCount === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
+            <NotificationBell />
+          </div>
         </header>
 
         <div className="p-4 md:p-6 space-y-6">
@@ -133,15 +193,21 @@ export function CounselorDashboard() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
               <div className="text-sm text-muted-foreground mb-1">Active Students</div>
-              <div className="text-2xl font-bold text-foreground">24</div>
+              <div className="text-2xl font-bold text-foreground">
+                {isLoadingStudents ? '—' : students.length}
+              </div>
             </div>
             <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
-              <div className="text-sm text-muted-foreground mb-1">This Week</div>
-              <div className="text-2xl font-bold text-foreground">12</div>
+              <div className="text-sm text-muted-foreground mb-1">Next 7 Days</div>
+              <div className="text-2xl font-bold text-foreground">
+                {isLoadingSessions ? '—' : upcomingThisWeek}
+              </div>
             </div>
             <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
-              <div className="text-sm text-muted-foreground mb-1">Avg Session Time</div>
-              <div className="text-2xl font-bold text-foreground">45m</div>
+              <div className="text-sm text-muted-foreground mb-1">Sessions Completed</div>
+              <div className="text-2xl font-bold text-foreground">
+                {isLoadingSessions ? '—' : completedSessions}
+              </div>
             </div>
             <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
               <div className="text-sm text-muted-foreground mb-1">Risk Alerts</div>
@@ -150,46 +216,26 @@ export function CounselorDashboard() {
           </div>
 
           {/* Risk review queue (live) */}
-          <RiskQueue onCountChange={setRiskQueueCount} />
+          <div ref={riskRef}>
+            <RiskQueue onCountChange={setRiskQueueCount} />
+          </div>
 
           {/* Availability (live) */}
-          <CounselorAvailability />
+          <div ref={availabilityRef}>
+            <CounselorAvailability />
+          </div>
 
-          {/* Upcoming Sessions */}
-          <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-            <h2 className="text-lg font-semibold mb-4">Upcoming Sessions</h2>
-            <div className="space-y-3">
-              {upcomingSessions.map((session, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-4 bg-muted rounded-lg hover:bg-muted/80 transition"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${
-                      session.risk === 'red' ? 'bg-destructive' :
-                      session.risk === 'yellow' ? 'bg-warning' : 'bg-success'
-                    }`}></div>
-                    <div>
-                      <div className="font-medium">{session.student}</div>
-                      <div className="text-sm text-muted-foreground">{session.topic}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Clock className="w-4 h-4" />
-                      {session.time}
-                    </div>
-                    <button className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition">
-                      View Details
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+          {/* Sessions & notes (live) */}
+          <div ref={sessionsRef}>
+            <CounselorSessions
+              sessions={sessions}
+              isLoading={isLoadingSessions}
+              onChanged={loadSessions}
+            />
           </div>
 
           {/* Student Profiles (live) */}
-          <div className="space-y-4">
+          <div className="space-y-4" ref={studentsRef}>
             <h2 className="text-lg font-semibold">Student Profiles</h2>
             {isLoadingStudents ? (
               <div className="bg-card border border-border rounded-xl p-12 flex items-center justify-center">
@@ -324,15 +370,20 @@ export function CounselorDashboard() {
                     )}
                   </div>
 
+                  {/* Notes attach to a session, so there is no student-level
+                      "Add Note" — scheduling comes first, then notes on it. */}
                   <div className="flex gap-3 pt-2">
-                    <button className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition">
+                    <button
+                      onClick={() => setScheduleFor(student)}
+                      className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition"
+                    >
                       Schedule Session
                     </button>
-                    <button className="px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-muted/80 transition">
-                      View Full History
-                    </button>
-                    <button className="px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-muted/80 transition">
-                      Add Note
+                    <button
+                      onClick={() => scrollTo(sessionsRef)}
+                      className="px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-muted/80 transition"
+                    >
+                      Sessions &amp; Notes
                     </button>
                   </div>
                 </div>
@@ -343,6 +394,15 @@ export function CounselorDashboard() {
 
           {/* Non-diagnostic disclaimer */}
           <Disclaimer variant="full" className="pt-2" />
+
+          {scheduleFor && (
+            <ScheduleSessionDialog
+              studentId={scheduleFor.student_id}
+              studentName={`${scheduleFor.first_name} ${scheduleFor.last_name}`}
+              onClose={() => setScheduleFor(null)}
+              onScheduled={loadSessions}
+            />
+          )}
         </div>
       </div>
     </div>

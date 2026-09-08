@@ -492,6 +492,16 @@ async def get_wellness_trend_range(
     ]
 
 
+async def verify_parent_child_link(
+    db: AsyncSession, user_id: uuid.UUID, student_id: uuid.UUID
+) -> None:
+    """
+    Public guard for callers outside this module (e.g. counselor booking):
+    raise 403 unless this parent user is linked to this student.
+    """
+    await _verify_parent_child_link(db, user_id, student_id)
+
+
 async def _verify_parent_child_link(
     db: AsyncSession, user_id: uuid.UUID, student_id: uuid.UUID
 ) -> None:

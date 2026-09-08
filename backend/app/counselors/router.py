@@ -79,15 +79,36 @@ async def get_slots(
     "/book",
     response_model=BookResponse,
     status_code=201,
-    dependencies=[Depends(require_role("student"))],
+    dependencies=[Depends(require_role("student", "parent"))],
 )
 async def book_counselor(
     payload: BookRequest,
     current_user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Book an open counselor slot (platform-wide)."""
-    student_id = await get_student_id_for_user(db, current_user.user_id)
+    """
+    Book an open counselor slot (platform-wide).
+
+    Students book for themselves. Parents book on behalf of a linked child and
+    must supply `student_id`; the link is verified before the slot is taken.
+    """
+    if current_user.role == "parent":
+        from fastapi import HTTPException, status
+
+        from app.parents.service import verify_parent_child_link
+
+        if payload.student_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Select which child this session is for.",
+            )
+        await verify_parent_child_link(db, current_user.user_id, payload.student_id)
+        student_id = payload.student_id
+    else:
+        # A student's own profile always wins; a supplied student_id is ignored
+        # so nobody can book a session onto someone else's record.
+        student_id = await get_student_id_for_user(db, current_user.user_id)
+
     return await book_slot(db, student_id, payload)
 
 

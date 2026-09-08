@@ -104,6 +104,16 @@ async def create_session(
     db: AsyncSession, counselor_id: uuid.UUID, payload: SessionCreate
 ) -> SessionResponse:
     """Schedule a new counselor session."""
+    # Resolve the student first: an unknown id would otherwise surface as a raw
+    # foreign-key error (500) instead of a 404.
+    student = (await db.execute(
+        select(User)
+        .join(StudentProfile, StudentProfile.user_id == User.user_id)
+        .where(StudentProfile.student_id == payload.student_id)
+    )).scalar_one_or_none()
+    if student is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+
     session = CounselorSession(
         student_id=payload.student_id,
         counselor_id=counselor_id,
@@ -112,7 +122,10 @@ async def create_session(
     db.add(session)
     await db.flush()
     await db.refresh(session)
-    return SessionResponse.model_validate(session)
+
+    result = SessionResponse.model_validate(session)
+    result.student_name = f"{student.first_name} {student.last_name}".strip()
+    return result
 
 
 async def list_sessions(
@@ -121,7 +134,15 @@ async def list_sessions(
     status_filter: str | None = None,
 ) -> tuple[list[SessionResponse], int]:
     """List counselor sessions."""
-    query = select(CounselorSession).where(CounselorSession.counselor_id == counselor_id)
+    # Joined to the student's user row so the caller gets a name to display --
+    # counselor_sessions only stores student_id, and a session list showing bare
+    # UUIDs is useless in the UI.
+    query = (
+        select(CounselorSession, User)
+        .join(StudentProfile, CounselorSession.student_id == StudentProfile.student_id)
+        .join(User, StudentProfile.user_id == User.user_id)
+        .where(CounselorSession.counselor_id == counselor_id)
+    )
     count_query = (
         select(func.count())
         .select_from(CounselorSession)
@@ -138,9 +159,15 @@ async def list_sessions(
     total = total_result.scalar() or 0
 
     result = await db.execute(query)
-    sessions = result.scalars().all()
+    rows = result.all()
 
-    return [SessionResponse.model_validate(s) for s in sessions], total
+    sessions = []
+    for session, user in rows:
+        item = SessionResponse.model_validate(session)
+        item.student_name = f"{user.first_name} {user.last_name}".strip()
+        sessions.append(item)
+
+    return sessions, total
 
 
 async def update_session(

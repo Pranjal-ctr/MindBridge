@@ -3,14 +3,19 @@ import { ArrowLeft, Star, Calendar, Check, Loader2, Globe, GraduationCap, Award,
 import { KioLogo } from './KioLogo';
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../lib/api';
+import { useAuth } from '../../lib/auth-context';
 import type {
   AvailabilitySlot,
   CounselorDirectoryItem,
   CounselorDirectoryResponse,
   BookResponse,
+  LinkedChildResponse,
 } from '../../lib/types';
 
 export function BookCounselor() {
+  const { user } = useAuth();
+  const isParent = user?.role === 'parent';
+
   const [counselors, setCounselors] = useState<CounselorDirectoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCounselor, setSelectedCounselor] = useState<string | null>(null);
@@ -18,6 +23,25 @@ export function BookCounselor() {
   const [booking, setBooking] = useState(false);
   const [confirmation, setConfirmation] = useState<BookResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Parents book on behalf of a linked child, so they must pick one first.
+  const [children, setChildren] = useState<LinkedChildResponse[]>([]);
+  const [childId, setChildId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isParent) return;
+    let cancelled = false;
+    api
+      .get<{ children: LinkedChildResponse[] }>('/linking/children')
+      .then(({ data }) => {
+        if (cancelled) return;
+        setChildren(data.children);
+        // Skip the picker entirely when there's only one child.
+        if (data.children.length === 1) setChildId(data.children[0].student_id);
+      })
+      .catch(() => { if (!cancelled) setChildren([]); });
+    return () => { cancelled = true; };
+  }, [isParent]);
 
   const load = useCallback(async () => {
     try {
@@ -37,10 +61,17 @@ export function BookCounselor() {
 
   const confirmBooking = async () => {
     if (!selectedSlot) return;
+    if (isParent && !childId) {
+      setError('Please choose which child this session is for.');
+      return;
+    }
     setBooking(true);
     setError(null);
     try {
-      const { data } = await api.post<BookResponse>('/counselors/book', { slot_id: selectedSlot.slot_id });
+      const { data } = await api.post<BookResponse>('/counselors/book', {
+        slot_id: selectedSlot.slot_id,
+        ...(isParent && childId ? { student_id: childId } : {}),
+      });
       setConfirmation(data);
       await load();
       setSelectedSlot(null);
@@ -62,7 +93,10 @@ export function BookCounselor() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-4">
-              <Link to="/student" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition">
+              <Link
+                to={isParent ? '/parent' : '/student'}
+                className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition"
+              >
                 <ArrowLeft className="w-5 h-5" />
                 <span className="hidden sm:inline">Back to Dashboard</span>
               </Link>
@@ -79,9 +113,39 @@ export function BookCounselor() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">Book a Counselor Session</h1>
           <p className="text-muted-foreground">
-            Connect with any licensed Kio counselor — available to every student, from every school.
+            {isParent
+              ? 'Book a session for your child with any licensed Kio counselor.'
+              : 'Connect with any licensed Kio counselor — available to every student, from every school.'}
           </p>
         </div>
+
+        {/* Parents book on behalf of a child; students always book for themselves. */}
+        {isParent && (
+          <div className="mb-6 p-4 bg-card border border-border rounded-xl">
+            <label className="text-sm font-medium text-foreground mb-2 block">
+              Book this session for
+            </label>
+            {children.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No children are linked to your account yet. Ask your child to share their
+                invite code, then link it from your dashboard.
+              </p>
+            ) : (
+              <select
+                value={childId ?? ''}
+                onChange={(e) => setChildId(e.target.value || null)}
+                className="w-full sm:w-72 px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Select a child…</option>
+                {children.map((child) => (
+                  <option key={child.student_id} value={child.student_id}>
+                    {child.first_name} {child.last_name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
 
         {confirmation && (
           <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3">
