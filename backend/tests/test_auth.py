@@ -27,6 +27,9 @@ async def test_signup_success(client: AsyncClient, test_tenant):
         "role": "student",
         "phone": "+1 555 010 0000",
         "school_code": test_tenant.school_code,
+        "date_of_birth": "2000-01-01",
+        "accept_terms": True,
+        "accept_privacy": True,
     })
     assert response.status_code == 201
     data = response.json()
@@ -47,6 +50,9 @@ async def test_signup_duplicate_email(client: AsyncClient, test_tenant, test_stu
         "role": "student",
         "phone": "+1 555 010 0001",
         "school_code": test_tenant.school_code,
+        "date_of_birth": "2000-01-01",
+        "accept_terms": True,
+        "accept_privacy": True,
     })
     assert response.status_code == 409
 
@@ -62,6 +68,9 @@ async def test_signup_duplicate_email_case_insensitive(client: AsyncClient, test
         "role": "student",
         "phone": "+1 555 010 0002",
         "school_code": test_tenant.school_code,
+        "date_of_birth": "2000-01-01",
+        "accept_terms": True,
+        "accept_privacy": True,
     })
     assert response.status_code == 409
 
@@ -78,6 +87,9 @@ async def test_staff_self_signup_rejected(client: AsyncClient, test_tenant, role
         "role": role,
         "phone": "+1 555 010 0003",
         "school_code": test_tenant.school_code,
+        "date_of_birth": "2000-01-01",
+        "accept_terms": True,
+        "accept_privacy": True,
     })
     assert response.status_code == 422
 

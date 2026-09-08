@@ -5,13 +5,12 @@ Business logic for registration, login, and token management.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger(__name__)
-
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +24,13 @@ from app.auth.utils import (
     verify_password,
 )
 from app.config import settings
+from app.consent.service import (
+    enforce_age_gate,
+    record_signup_consent,
+    sync_student_age,
+)
+from app.email.service import try_send
+from app.email.templates import password_reset_email, verification_email
 from database.models import (
     CounselorProfile,
     ParentProfile,
@@ -34,19 +40,32 @@ from database.models import (
     User,
 )
 
+logger = logging.getLogger(__name__)
 
-async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User, TokenResponse]:
+
+async def register_user(
+    db: AsyncSession,
+    payload: SignupRequest,
+    background_tasks: BackgroundTasks | None = None,
+    request: Request | None = None,
+) -> tuple[User, TokenResponse]:
     """
     Register a new user with role-specific profile creation.
 
     Steps:
+    0. Age gate (refuses under-13 outright; flags 13-17 for guardian consent)
     1. Validate school_code per role
     2. Resolve tenant from school_code
     3. Check for duplicate email
     4. Create user + role-specific profile
     5. If parent with invite_code, auto-redeem and link accounts
-    6. Generate JWT tokens
+    6. Record the terms/privacy consent that Pydantic already required
+    7. Generate JWT tokens
     """
+    # 0. Age gate first: an under-13 signup must be refused before a row, a
+    # tenant seat, or a verification email is spent on it.
+    guardian_status = enforce_age_gate(payload.date_of_birth)
+
     # 1. Validate school_code requirement per role
     roles_requiring_school_code = {"student", "parent", "school_admin"}
     if payload.role in roles_requiring_school_code and not payload.school_code:
@@ -81,6 +100,8 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
         first_name=payload.first_name,
         last_name=payload.last_name,
         phone=payload.phone,
+        date_of_birth=payload.date_of_birth,
+        guardian_consent_status=guardian_status,
         is_active=True,
     )
     db.add(user)
@@ -88,51 +109,186 @@ async def register_user(db: AsyncSession, payload: SignupRequest) -> tuple[User,
 
     # 5. Create role-specific profile
     await _create_role_profile(db, user)
+    await sync_student_age(db, user)
 
     # 6. If parent with invite_code, auto-redeem
     if payload.role == "parent" and payload.invite_code:
         await _auto_redeem_invite(db, user, payload.invite_code)
 
-    # 7. Issue email-verification token (link logged until SMTP is wired up)
-    _issue_verification_link(user)
+    # 7. Record consent. The schema already refused false values, so reaching
+    # here means both were accepted; this writes the auditable evidence.
+    await record_signup_consent(db, user.user_id, request=request)
 
-    # 8. Generate tokens
+    # 8. Send the email-verification link (background when the router supplies a queue)
+    await dispatch_verification_email(user, background_tasks)
+
+    # 9. Generate tokens
     tokens = _generate_tokens(user)
 
     return user, tokens
 
 
-def _issue_verification_link(user: User) -> None:
-    """Create a 24h verification token and log the link (SMTP delivery is a follow-up)."""
-    from datetime import timedelta
+# -------------------------------------------------------------------
+# Emailed one-time links (verification + password reset)
+# -------------------------------------------------------------------
 
-    token = create_access_token(
-        {"sub": str(user.user_id), "purpose": "email_verify"},
-        expires_delta=timedelta(hours=24),
-    )
-    logger.info("Email verification link for %s: /auth/verify?token=%s", user.email, token)
+def _link(path: str, token: str) -> str:
+    """Build an absolute frontend URL carrying a one-time token."""
+    return f"{settings.FRONTEND_URL.rstrip('/')}{path}?token={token}"
 
 
-async def verify_email(db: AsyncSession, token: str) -> None:
-    """Mark a user's email as verified from a verification token."""
+def _password_fingerprint(password_hash: str) -> str:
+    """
+    Short digest of the current password hash, embedded in reset tokens.
+
+    This makes a reset link genuinely single-use with no extra table: once the
+    password changes the stored hash changes, so the fingerprint in any
+    previously issued token no longer matches and the link is dead. It also
+    invalidates outstanding reset links whenever the password changes by any
+    other route.
+    """
+    return hashlib.sha256(password_hash.encode()).hexdigest()[:16]
+
+
+def _decode_purpose_token(token: str, expected_purpose: str, error_detail: str) -> dict:
+    """Decode a JWT and assert its `purpose` claim, or raise 400."""
     from jose import JWTError
 
     try:
         payload = decode_token(token)
-        if payload.get("purpose") != "email_verify":
+        if payload.get("purpose") != expected_purpose:
             raise ValueError("wrong purpose")
-        user_id = uuid.UUID(payload["sub"])
-    except (JWTError, KeyError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification link",
-        )
+        uuid.UUID(payload["sub"])  # validate shape early
+    except (JWTError, KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_detail)
+    return payload
 
-    result = await db.execute(select(User).where(User.user_id == user_id))
+
+async def dispatch_verification_email(
+    user: User,
+    background_tasks: BackgroundTasks | None = None,
+) -> None:
+    """
+    Mint a verification token and send the link.
+
+    Message fields are snapshotted into plain strings before scheduling so the
+    background task never touches a detached ORM instance after the request's
+    session closes.
+    """
+    token = create_access_token(
+        {"sub": str(user.user_id), "purpose": "email_verify"},
+        expires_delta=timedelta(hours=settings.EMAIL_VERIFY_TOKEN_HOURS),
+    )
+    link = _link("/verify-email", token)
+    subject, text, html = verification_email(
+        first_name=user.first_name,
+        link=link,
+        expires_hours=settings.EMAIL_VERIFY_TOKEN_HOURS,
+    )
+    # Logged so local development works with EMAIL_PROVIDER=noop.
+    logger.info("Email verification link for %s: %s", user.email, link)
+
+    message = {"to": user.email, "subject": subject, "body": text, "html": html}
+    if background_tasks is not None:
+        background_tasks.add_task(try_send, **message)
+    else:
+        await try_send(**message)
+
+
+async def verify_email(db: AsyncSession, token: str) -> None:
+    """Mark a user's email as verified from a verification token."""
+    payload = _decode_purpose_token(
+        token, "email_verify", "This verification link is invalid or has expired."
+    )
+
+    result = await db.execute(select(User).where(User.user_id == uuid.UUID(payload["sub"])))
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    user.is_verified = True
+    await db.flush()
+
+
+async def resend_verification(
+    db: AsyncSession,
+    user: User,
+    background_tasks: BackgroundTasks | None = None,
+) -> None:
+    """Re-send the verification link for an authenticated, still-unverified user."""
+    if user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Your email address is already verified.",
+        )
+    await dispatch_verification_email(user, background_tasks)
+
+
+async def request_password_reset(
+    db: AsyncSession,
+    email: str,
+    background_tasks: BackgroundTasks | None = None,
+) -> None:
+    """
+    Email a password-reset link.
+
+    Always completes silently, whether or not the address belongs to an account:
+    reporting "no such user" here would turn this endpoint into an account
+    enumeration oracle. Google-only accounts have no password to reset, so they
+    are skipped too — the caller still sees the same generic response.
+    """
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    user = result.scalar_one_or_none()
+
+    if user is None or not user.is_active or not user.password_hash:
+        logger.info("Password reset requested for non-resettable address %s (no email sent)", email)
+        return
+
+    token = create_access_token(
+        {
+            "sub": str(user.user_id),
+            "purpose": "password_reset",
+            "pwf": _password_fingerprint(user.password_hash),
+        },
+        expires_delta=timedelta(hours=settings.PASSWORD_RESET_TOKEN_HOURS),
+    )
+    link = _link("/reset-password", token)
+    subject, text, html = password_reset_email(
+        first_name=user.first_name,
+        link=link,
+        expires_hours=settings.PASSWORD_RESET_TOKEN_HOURS,
+    )
+    logger.info("Password reset link for %s: %s", user.email, link)
+
+    message = {"to": user.email, "subject": subject, "body": text, "html": html}
+    if background_tasks is not None:
+        background_tasks.add_task(try_send, **message)
+    else:
+        await try_send(**message)
+
+
+async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:
+    """Consume a reset token and set a new password."""
+    expired_detail = "This reset link is invalid or has expired. Please request a new one."
+    payload = _decode_purpose_token(token, "password_reset", expired_detail)
+
+    result = await db.execute(select(User).where(User.user_id == uuid.UUID(payload["sub"])))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=expired_detail)
+
+    if not user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account signs in with Google. Use 'Continue with Google' instead.",
+        )
+
+    # Single-use enforcement: the fingerprint stops matching once the password changes.
+    if payload.get("pwf") != _password_fingerprint(user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=expired_detail)
+
+    user.password_hash = hash_password(new_password)
+    # A completed reset proves control of the inbox.
     user.is_verified = True
     await db.flush()
 
@@ -261,10 +417,16 @@ async def google_authenticate(db: AsyncSession, google_id_token: str):
     )
 
 
-async def google_complete_registration(db: AsyncSession, payload) -> tuple[User, TokenResponse]:
+async def google_complete_registration(
+    db: AsyncSession, payload, request: Request | None = None
+) -> tuple[User, TokenResponse]:
     """
     Finish a Google signup. Only student/parent self-signup is allowed.
     Reuses tenant resolution, seat enforcement, profile creation, and invite auto-redeem.
+
+    Runs the same age gate and records the same consent as password signup:
+    Google verifies an email address, not an age, so skipping either here
+    would make "Continue with Google" a way around both.
     """
     from jose import JWTError
 
@@ -284,6 +446,8 @@ async def google_complete_registration(db: AsyncSession, payload) -> tuple[User,
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired Google registration session. Please try again.",
         )
+
+    guardian_status = enforce_age_gate(payload.date_of_birth)
 
     # Role is validated by the schema to student|parent; school_code required for both
     roles_requiring_school_code = {"student", "parent"}
@@ -320,6 +484,8 @@ async def google_complete_registration(db: AsyncSession, payload) -> tuple[User,
         last_name=last_name,
         phone=payload.phone,
         profile_image=picture,
+        date_of_birth=payload.date_of_birth,
+        guardian_consent_status=guardian_status,
         is_active=True,
         is_verified=True,
     )
@@ -327,9 +493,12 @@ async def google_complete_registration(db: AsyncSession, payload) -> tuple[User,
     await db.flush()
 
     await _create_role_profile(db, user)
+    await sync_student_age(db, user)
 
     if payload.role == "parent" and payload.invite_code:
         await _auto_redeem_invite(db, user, payload.invite_code)
+
+    await record_signup_consent(db, user.user_id, request=request)
 
     tokens = _generate_tokens(user)
     return user, tokens

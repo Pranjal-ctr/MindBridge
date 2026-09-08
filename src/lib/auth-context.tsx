@@ -37,6 +37,8 @@ interface AuthContextValue extends AuthState {
   loginWithGoogle: (idToken: string) => Promise<GoogleAuthResponse>;
   /** Finish a Google signup with mobile + institution code. */
   completeGoogleSignup: (payload: GoogleCompleteRequest) => Promise<UserResponse>;
+  /** Re-fetch /auth/me. Used after out-of-band changes such as email verification. */
+  refreshUser: () => Promise<UserResponse | null>;
   logout: () => void;
 }
 
@@ -104,6 +106,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const refreshUser = useCallback(async (): Promise<UserResponse | null> => {
+    if (!getAccessToken()) return null;
+    try {
+      const { data } = await api.get<UserResponse>('/auth/me');
+      setUser(data);
+      return data;
+    } catch {
+      // Leave the current session untouched — a failed refresh isn't a logout.
+      return null;
+    }
+  }, []);
+
   const logout = useCallback(() => {
     clearTokens();
     setUser(null);
@@ -118,9 +132,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signup,
       loginWithGoogle,
       completeGoogleSignup,
+      refreshUser,
       logout,
     }),
-    [user, isLoading, login, signup, loginWithGoogle, completeGoogleSignup, logout]
+    [user, isLoading, login, signup, loginWithGoogle, completeGoogleSignup, refreshUser, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

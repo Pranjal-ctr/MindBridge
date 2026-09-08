@@ -7,19 +7,22 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import (
     AuthResponse,
+    ForgotPasswordRequest,
     GoogleAuthRequest,
     GoogleAuthResponse,
     GoogleCompleteRequest,
     LoginRequest,
     RefreshTokenRequest,
+    ResetPasswordRequest,
     SignupRequest,
     TokenResponse,
     UserResponse,
+    VerifyEmailRequest,
 )
 from app.auth.service import (
     authenticate_user,
@@ -27,6 +30,9 @@ from app.auth.service import (
     google_complete_registration,
     refresh_access_token,
     register_user,
+    request_password_reset,
+    resend_verification,
+    reset_password,
     verify_email,
 )
 from app.dependencies import CurrentUser
@@ -44,16 +50,21 @@ router = APIRouter()
 )
 async def signup(
     payload: SignupRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
     Register a new user account.
 
+    - Runs the age gate (under 13 refused; 13-17 held for guardian consent)
     - Creates user with hashed password
     - Creates role-specific profile (student/parent/counselor/school_admin)
+    - Records terms/privacy consent with IP and user agent
+    - Sends the email-verification link in the background
     - Returns JWT tokens + user info
     """
-    user, tokens = await register_user(db, payload)
+    user, tokens = await register_user(db, payload, background_tasks, request)
     return AuthResponse(
         tokens=tokens,
         user=UserResponse.model_validate(user),
@@ -108,10 +119,15 @@ async def google_auth(
 )
 async def google_complete(
     payload: GoogleCompleteRequest,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Finish a Google signup (student/parent only) with mobile + institution code."""
-    user, tokens = await google_complete_registration(db, payload)
+    """Finish a Google signup (student/parent only).
+
+    Requires the same date of birth and consent as password signup — Google
+    verifies an email address, not an age.
+    """
+    user, tokens = await google_complete_registration(db, payload, request)
     return AuthResponse(
         tokens=tokens,
         user=UserResponse.model_validate(user),
@@ -129,14 +145,56 @@ async def refresh_token(
     return await refresh_access_token(db, payload.refresh_token)
 
 
-@router.post("/verify")
+@router.post("/verify", dependencies=[Depends(rate_limit("verify", 20))])
 async def verify_email_endpoint(
-    token: str,
+    payload: VerifyEmailRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Verify a user's email address from a verification token."""
-    await verify_email(db, token)
+    """
+    Verify a user's email address from a verification token.
+
+    Called by the frontend /verify-email page with the token from the email link.
+    Idempotent — re-clicking a still-valid link succeeds again.
+    """
+    await verify_email(db, payload.token)
     return {"status": "verified"}
+
+
+@router.post("/verify/resend", dependencies=[Depends(rate_limit("verify_resend", 3))])
+async def resend_verification_endpoint(
+    current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Re-send the verification email to the signed-in user (409 if already verified)."""
+    await resend_verification(db, current_user, background_tasks)
+    return {"status": "sent"}
+
+
+@router.post("/password/forgot", dependencies=[Depends(rate_limit("password_forgot", 5))])
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Email a password-reset link.
+
+    Always returns the same response whether or not the address exists — this
+    endpoint must not reveal which emails have accounts.
+    """
+    await request_password_reset(db, payload.email, background_tasks)
+    return {"status": "sent"}
+
+
+@router.post("/password/reset", dependencies=[Depends(rate_limit("password_reset", 5))])
+async def reset_password_endpoint(
+    payload: ResetPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Set a new password using a token from a reset email. Links are single-use."""
+    await reset_password(db, payload.token, payload.password)
+    return {"status": "reset"}
 
 
 @router.get("/me", response_model=UserResponse)

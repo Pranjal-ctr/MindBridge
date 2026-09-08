@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -41,6 +41,21 @@ class SignupRequest(BaseModel):
         description="Self-signup is limited to student/parent. Staff accounts are provisioned by a platform admin.",
     )
     phone: str = Field(..., min_length=5, max_length=20, description="Contact number (required)")
+    date_of_birth: date = Field(
+        ...,
+        description=(
+            "Required. Drives the age gate: under 13 is refused outright, "
+            "13-17 needs verified guardian consent before the account is usable."
+        ),
+    )
+    accept_terms: bool = Field(
+        ...,
+        description="Must be true. Recorded against the current terms version.",
+    )
+    accept_privacy: bool = Field(
+        ...,
+        description="Must be true. Recorded against the current privacy version.",
+    )
     school_code: str | None = Field(None, max_length=50, description="Required for student, parent, school_admin")
     invite_code: str | None = Field(None, max_length=10, description="Parent invite code from student (parent signup only)")
 
@@ -48,6 +63,17 @@ class SignupRequest(BaseModel):
     @classmethod
     def _check_phone(cls, v: str) -> str:
         return _normalize_phone(v)
+
+    @field_validator("accept_terms", "accept_privacy")
+    @classmethod
+    def _must_accept(cls, v: bool) -> bool:
+        # Rejected here rather than in the service so the API contract states
+        # it: there is no code path that creates an account without consent.
+        if not v:
+            raise ValueError(
+                "You must accept the Terms of Service and Privacy Policy to create an account."
+            )
+        return v
 
 
 class LoginRequest(BaseModel):
@@ -59,6 +85,22 @@ class LoginRequest(BaseModel):
 class RefreshTokenRequest(BaseModel):
     """Token refresh payload."""
     refresh_token: str
+
+
+class VerifyEmailRequest(BaseModel):
+    """Token from a verification email link."""
+    token: str = Field(..., min_length=10)
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request a password-reset link."""
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Set a new password using a token from a reset email."""
+    token: str = Field(..., min_length=10)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 # Responses ----------------------------------------------------------
@@ -82,8 +124,14 @@ class UserResponse(BaseModel):
     phone: str | None = None
     profile_image: str | None = None
     is_active: bool
+    is_verified: bool = False
     last_login: datetime | None = None
     created_at: datetime
+    # Age gate (migration 015). Additive and nullable: accounts created before
+    # the consent layer have neither, and "unknown" is the honest answer for
+    # them rather than assuming they are adults.
+    date_of_birth: date | None = None
+    guardian_consent_status: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -121,10 +169,18 @@ class GoogleAuthResponse(BaseModel):
 
 
 class GoogleCompleteRequest(BaseModel):
-    """Complete a Google signup with the only fields Google can't provide."""
+    """Complete a Google signup with the only fields Google can't provide.
+
+    Date of birth and consent are required here for the same reason they are on
+    SignupRequest: Google verifies an email address, not an age, and without
+    these fields signing in with Google would be a way around the age gate.
+    """
     registration_token: str = Field(..., min_length=10)
     role: str = Field(..., pattern=r"^(student|parent)$")
     phone: str = Field(..., min_length=5, max_length=20)
+    date_of_birth: date
+    accept_terms: bool
+    accept_privacy: bool
     school_code: str | None = Field(None, max_length=50)
     invite_code: str | None = Field(None, max_length=10)
 
@@ -132,3 +188,12 @@ class GoogleCompleteRequest(BaseModel):
     @classmethod
     def _check_phone(cls, v: str) -> str:
         return _normalize_phone(v)
+
+    @field_validator("accept_terms", "accept_privacy")
+    @classmethod
+    def _must_accept(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError(
+                "You must accept the Terms of Service and Privacy Policy to create an account."
+            )
+        return v
