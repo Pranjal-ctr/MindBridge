@@ -27,10 +27,19 @@ async def get_overview(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Get school-wide analytics overview.
+    School-wide analytics overview.
 
-    Includes total students, average wellness, risk distribution,
-    and wellness trend data. All data is anonymized.
+    Roster size, average wellness, check-in participation, risk distribution,
+    six-month wellness trend, dominant stress topics, and counselling coverage
+    — all aggregate, all scoped to the caller's school.
+
+    Schools below the minimum cohort size come back with `cohort_suppressed`
+    true and empty distributions: with a small roster a per-tier count
+    identifies individual students to an admin who can already see the roster.
+    Clients must render that state explicitly rather than as empty charts.
+
+    Fields distinguish "no data" from zero — `avg_wellness_score` and a trend
+    point's `score` are null when nothing has been recorded.
     """
     return await get_analytics_overview(db, tenant_id)
 
