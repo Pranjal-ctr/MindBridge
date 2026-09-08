@@ -8,9 +8,16 @@ import { CounselorDashboard } from './components/CounselorDashboard';
 import { SchoolAdminDashboard } from './components/SchoolAdminDashboard';
 import { BookCounselor } from './components/BookCounselor';
 import { LoginSignup } from './components/LoginSignup';
+import { VerifyEmail } from './components/VerifyEmail';
+import { ForgotPassword } from './components/ForgotPassword';
+import { ResetPassword } from './components/ResetPassword';
+import { GuardianConsent } from './components/GuardianConsent';
+import { TermsOfService } from './components/legal/TermsOfService';
+import { PrivacyPolicy } from './components/legal/PrivacyPolicy';
 import { StudentInviteCode } from './components/StudentInviteCode';
 import { StudentGrowthProfile } from './components/StudentGrowthProfile';
 import { StudentActivities } from './components/StudentActivities';
+import { StudentProfile } from './components/StudentProfile';
 import { AdminPlayground } from './components/AdminPlayground';
 import { AdminLayout } from './components/admin/AdminLayout';
 import { DashboardPage } from './components/admin/pages/DashboardPage';
@@ -33,6 +40,19 @@ export default function App() {
           {/* Public routes */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginSignup />} />
+
+          {/* Policies — public, because signup links to them before an
+              account exists and a guardian reads them with no account at all. */}
+          <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+
+          {/* Emailed one-time links — reachable signed in or out */}
+          <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          {/* Guardian approval: the visitor is a parent with no Kio account,
+              authorised by the signed token in the link. */}
+          <Route path="/guardian-consent" element={<GuardianConsent />} />
 
           {/* Protected routes — require authentication */}
           <Route
@@ -70,7 +90,7 @@ export default function App() {
           <Route
             path="/book-counselor"
             element={
-              <ProtectedRoute roles={['student']}>
+              <ProtectedRoute roles={['student', 'parent']}>
                 <BookCounselor />
               </ProtectedRoute>
             }
@@ -96,6 +116,14 @@ export default function App() {
             element={
               <ProtectedRoute roles={['student']}>
                 <StudentActivities />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/profile"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <StudentProfile />
               </ProtectedRoute>
             }
           />

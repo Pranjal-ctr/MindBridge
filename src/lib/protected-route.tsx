@@ -4,6 +4,8 @@
  */
 
 import { Navigate, useLocation } from 'react-router-dom';
+import { GuardianConsentBanner } from '../app/components/GuardianConsentBanner';
+import { VerifyBanner } from '../app/components/VerifyBanner';
 import { useAuth } from './auth-context';
 
 interface ProtectedRouteProps {
@@ -40,7 +42,15 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
     return <Navigate to={dashboardRoute} replace />;
   }
 
-  return <>{children}</>;
+  // Mounted here (rather than in each dashboard) so every protected surface
+  // shows the unverified-email and guardian-consent reminders from one place.
+  return (
+    <>
+      <GuardianConsentBanner />
+      <VerifyBanner />
+      {children}
+    </>
+  );
 }
 
 /** Maps backend role strings to their frontend dashboard routes */

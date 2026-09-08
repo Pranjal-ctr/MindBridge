@@ -186,6 +186,38 @@ Full list in `backend/.env.example`.
 
 ---
 
+## Consent, the age gate, and the policy documents
+
+Kio processes mental-health data belonging largely to minors, so signup is gated:
+
+- **Under 13** — refused outright, before any row is written.
+- **13–17** — the account is created but held at `guardian_consent_status="pending"`
+  until a parent approves via a one-time emailed link. Enforcement is a persistent
+  banner rather than a hard block; see `GuardianConsentBanner` for why.
+- **18+** — consents for themselves.
+
+Google sign-in carries the same gate: it verifies an email address, not an age.
+
+Consent is recorded in `user_consents`, append-only and versioned against the
+published policy version, with IP and user agent. Withdrawing stamps `revoked_at`;
+a new policy version writes a new row. Thresholds and versions live in one place,
+`backend/app/consent/policy.py`, mirrored for the client in `src/lib/policy.ts`.
+
+> ⚠️ **The Terms of Service and Privacy Policy in this repo are engineering drafts.**
+> They accurately describe what the code does with data, and they render with a
+> visible "pending legal review" banner. They have **not** been reviewed by a lawyer
+> and are not sufficient for launch. Two questions need counsel before serving real
+> minors — both recorded in `app/consent/policy.py`:
+>
+> 1. India's DPDP Act restricts behavioural monitoring of under-18s. Kio does
+>    continuous wellness scoring and risk detection on minors. Whether that is
+>    permitted, and under what conditions, is the largest open legal question about
+>    this product.
+> 2. What counts as *verifiable* parental consent per jurisdiction. Email
+>    confirmation is what is implemented; it is not sufficient everywhere.
+
+---
+
 ## Migrations
 
 ```bash
@@ -195,7 +227,44 @@ alembic revision --autogenerate -m "description"
 alembic downgrade -1               # roll back one step
 ```
 
-Migrations are never edited after the fact — each change is a new numbered file (currently `001` through `010`, covering the initial schema through Google auth/onboarding, platform-wide counselors, AI routing config, and the wellness/risk intelligence layer).
+Migrations are never edited after the fact — each change is a new numbered file (currently `001` through `014`, covering the initial schema through Google auth/onboarding, platform-wide counselors, AI routing config, the wellness/risk intelligence layer, the admin dashboard, and counselor verdict capture).
+
+---
+
+## Deployment
+
+Full runbook — environment matrix, hosting options, backups, rollback, smoke
+test: **[docs/deployment.md](docs/deployment.md)**.
+
+The whole stack in one command:
+
+```bash
+cp .env.docker.example .env       # fill in POSTGRES_PASSWORD, JWT_SECRET_KEY, ...
+docker compose up --build
+```
+
+Web on `:8080`, API on `:8000`. The API container runs `alembic upgrade head`
+on start.
+
+| Artifact | What it's for |
+|---|---|
+| `backend/Dockerfile` | API image. Migrations run via `docker-entrypoint.sh`. |
+| `Dockerfile` | Frontend build → nginx. |
+| `deploy/nginx.conf` | SPA rewrite + cache/security headers. |
+| `docker-compose.yml` | Single-box stack (Postgres included). |
+| `render.yaml` | Worked Render blueprint: managed Postgres, pre-deploy migrations, static frontend. |
+| `public/_redirects`, `vercel.json` | SPA rewrites for Netlify/Cloudflare and Vercel. |
+
+Three things that catch people out, covered in detail in the runbook:
+
+- **Deep links need an SPA rewrite.** `/student`, `/verify-email` and
+  `/reset-password` have no file on disk. Without an `/index.html` fallback
+  they 404 — and emailed verification and password-reset links land on exactly
+  those paths.
+- **`VITE_*` are baked in at build time.** Changing the API URL means a
+  rebuild, not a restart. Never put a secret behind that prefix.
+- **`WEB_CONCURRENCY` stays at 1** until rate limiting and the background
+  pipeline move off in-process state.
 
 ---
 

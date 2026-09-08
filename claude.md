@@ -132,6 +132,167 @@ npm run build
 
 ## 📝 Change Log
 
+### September 8, 2026 — Crisis alerts reach humans, Admin completed, consent layer
+- **The crisis path now reaches a human.** `crisis.py` had been fanning out
+  notifications since Phase 6 and **no frontend file read `/notifications`** — no bell,
+  no page, no toast. Added `NotificationBell` (polling, paused on hidden tabs, optimistic
+  read) mounted on all five signed-in surfaces via student/parent/counselor/school
+  dashboards + `AdminLayout`. Plus **email escalation** to counselors and school admins
+  (`crisis_alert_email`), because an in-app badge only reaches staff already signed in —
+  out of school hours, nobody. Email is content-free: student name and tier only, never
+  message text or categories, and **the subject omits the name** (lock-screen previews).
+  Parent email is **off by default** (`crisis.email_parents`) — it cannot be unsent and can
+  out a student; parents still get the content-free in-app notification. Mail failure can
+  never swallow the queue entry.
+- **8 stub Admin pages built**, `UnderConstruction.tsx` deleted. Dashboard (platform KPIs
+  with unreviewed-risk first), Counselors + detail (verification gates the public booking
+  directory, so it confirms), Risk Center + detail, AI Control (routing + prompt
+  activation, which changes what Comrade says to every student — confirms), Settings
+  (safety thresholds as validated JSON), and **Audit Logs** — whose `listAuditLogs` /
+  `exportAuditLogsCsv` clients had existed unused since the P0 commit, making that
+  backend work unreachable.
+- **New: cross-tenant risk oversight** (`GET /admin/risk`, `/admin/risk/{id}`).
+  `/risk/queue` filters on the *caller's* tenant, so a platform admin hitting it saw their
+  own empty queue. Deliberately **read-only** — recording a verdict is a clinical judgment
+  belonging to the counselor who owns the case. Ordered most-severe-then-oldest so stale
+  rows surface; `age_hours` is server-computed so SLA flags don't depend on the browser clock.
+- **Consent layer + age gate** (migration 015). Terms/Privacy were `href="#"` dead links
+  with an unbound checkbox; there was no DOB and no record that anyone agreed to anything.
+  Now: `users.date_of_birth` + `guardian_consent_status`, append-only `user_consents`
+  (never updated — withdrawal stamps `revoked_at`, a new version writes a new row),
+  IP/user-agent captured, and **policy versions** so a grant proves *what* was agreed to.
+  Under 13 refused before a row is written; 13–17 created but `pending` until a guardian
+  approves via emailed one-time link (one-shot, so a forwarded email can't flip it).
+  **Google signup carries the same gate** — it verifies an email address, not an age.
+- **Policy pages** `/terms` + `/privacy` (public), `/guardian-consent`, and a
+  `GuardianConsentBanner` mounted once in `ProtectedRoute`. Enforcement is **soft** by
+  design (banner, not a wall) — a blocked screen teaches a struggling 15-year-old that the
+  thing they reached for doesn't work.
+- ⚠️ **The policy documents are engineering drafts and carry a visible "pending legal
+  review" banner.** They describe what the code actually does; they are not lawyer-reviewed
+  and are not launch-sufficient. Two open questions are recorded in
+  `app/consent/policy.py`: whether DPDP permits Kio's continuous behavioural monitoring of
+  minors at all, and what counts as "verifiable" parental consent per jurisdiction.
+- Tests: 8 admin-risk, 19 consent (incl. leap-day and boundary arithmetic), 4 crisis-email,
+  7 notification-bell, 10 age-gate frontend.
+
+### September 7, 2026 — Deployment artifacts + school analytics made real
+- **The repo is now deployable.** There were previously no deployment artifacts of
+  any kind. Added `backend/Dockerfile` (multi-stage, pinned `python:3.11.9-slim`,
+  non-root, healthcheck), root `Dockerfile` (Vite build → nginx), `deploy/nginx.conf`,
+  `docker-compose.yml` (+ `.env.docker.example`), `render.yaml` as a worked
+  blueprint, and `docs/deployment.md` (env matrix, hosting options, **Postgres
+  backup/restore policy**, rollback, smoke test, troubleshooting).
+- **`alembic upgrade head` now actually runs somewhere.** `backend/docker-entrypoint.sh`
+  migrates on boot (`RUN_MIGRATIONS`, default true) and supports `migrate` / `seed`
+  subcommands; `seed` **refuses when `ENVIRONMENT=production`** (it creates demo
+  accounts sharing one published password). `render.yaml` uses the release-job
+  pattern instead, which is what >1 replica requires.
+- **SPA rewrites shipped for every host** — `deploy/nginx.conf`, `public/_redirects`,
+  `vercel.json`, `render.yaml` routes. Without these `/student`, `/verify-email` and
+  `/reset-password` 404, which breaks emailed verification and password-reset links
+  specifically. Rewrite (200), never redirect, so `?token=` survives.
+- **`DATABASE_URL` normalisation** (`app/config.py`): Render/Railway/Heroku hand out
+  `postgres://`, which SQLAlchemy routes to psycopg2 — not installed — so the app
+  died at import with a `ModuleNotFoundError` naming neither the DB nor the driver.
+  Now coerced to `postgresql+asyncpg://`; an explicit `+driver` is left alone.
+- **Requirements exact-pinned** and split (`requirements.txt` runtime /
+  `requirements-dev.txt` test). `.*` ranges meant a deploy could install a different
+  tree than CI tested. `google-auth` added as a **declared** dependency — it is
+  imported directly by `app/auth/google.py` but was only arriving transitively via
+  `google-genai`. The `bcrypt==4.1.3` pin is documented as load-bearing for passlib.
+- **CI**: new `migrations` job (applies 001→head on an empty DB and asserts a single
+  head — the test suite builds schema from models via `create_all` and never
+  exercises the chain), plus typecheck, frontend tests, and a `docker-build` job.
+  Fixed `test_suspended_school_blocks_signup_and_login`, which 422'd on the now-required
+  `phone` field before reaching its 403 assertion — the tenant-suspension gate had been
+  silently untested.
+
+- **School analytics are real numbers or no numbers.** Four of seven `AnalyticsOverview`
+  fields were empty, hardcoded, or wrong: `stress_by_category` was never populated,
+  `wellness_trend` read `analytics_snapshots` (written only by `seed.py`),
+  `counselor_utilization` was a literal `0.0`, and `active_counselors` joined
+  `counselor_profiles` on `users.tenant_id` — a relationship migration 008 replaced,
+  so it returned ~0 for every school. Rebuilt on `wellness_scores`,
+  `stress_distributions` (latest row per student, DISTINCT ON), and
+  `counselor_school_assignments` / `counselor_sessions`. Added check-in participation
+  from `wellness_records.mood_label`.
+- **Small-cohort suppression** (`MIN_COHORT_SIZE = 10`): a school admin can see the
+  roster, so "1 student at critical risk" in a tiny school names them. Below the floor
+  every distribution is withheld and `cohort_suppressed` is set. Residual limitation
+  documented in the service: single-student tiers above the floor are still returned.
+- **"No data" is now distinct from zero** — `avg_wellness_score` and per-month trend
+  scores are nullable. A month with no records renders as a gap, not a wellbeing collapse.
+- **Timezone bug found by the new tests**: `date_trunc('month', <timestamptz>)`
+  truncates in the *session* timezone, so on a non-UTC server (the test DB reports
+  Asia/Calcutta) the current month bucketed to the previous month and the entire trend
+  chart came back silently empty. Now `date_trunc('month', created_at AT TIME ZONE 'UTC')`.
+- **`SchoolAdminDashboard` rewritten against the API.** The hardcoded `wellnessTrend` /
+  `riskDistribution` / `stressByCategory` arrays are gone, along with the invented "Key
+  Insights", "Recommended Actions" and a "Monthly Wellness Report" card citing 97% parent
+  satisfaction — a metric that exists nowhere in the product. Real school name (new
+  `school_name` on the overview), **working sign-out** (was a `<Link to="/">` leaving a
+  valid JWT in localStorage — the same bug fixed on the counselor dashboard in August),
+  sidebar nav scrolls to real sections instead of `href="#"`, plus loading/error/empty
+  and suppressed states.
+- Tests: 16 new in `backend/tests/test_analytics.py` (175 backend total) — the module
+  previously had **zero** coverage, which is how the four broken fields survived.
+
+### August 4, 2026 — Counselor dashboard: real identity, live sessions & notes
+- **Sign-out bug fixed**: the counselor sidebar was a `<Link to="/">` with no handler, so
+  "Sign Out" left a valid JWT in localStorage — on a shared school machine the next person
+  could walk back in. Now calls `logout()` like the student/parent dashboards.
+- **No more fake counselor**: the hardcoded `"Dr. Jennifer Martinez"` is replaced by the
+  signed-in user from `useAuth()`.
+- **Stats are real**: Active Students (roster length), Next 7 Days and Sessions Completed
+  (from `/counselors/sessions`). "Avg Session Time" was **removed, not recomputed** —
+  `counselor_sessions` has no duration column, so the old `45m` was unbackable.
+- **Sessions & notes are live** (`CounselorSessions.tsx`, `ScheduleSessionDialog.tsx`,
+  `src/lib/counselor-api.ts`): the mock `upcomingSessions` array is gone. Upcoming/past
+  split, per-session status transitions, and lazily-loaded notes on expand. "Schedule
+  Session" on a student card now works. The dead student-level "Add Note" button was
+  dropped — notes attach to a session, so scheduling has to come first.
+- **Sidebar nav works**: four `href="#"` links became in-page scroll targets
+  (Students / Availability / Sessions & Notes / Risk Alerts).
+- **Backend** (additive, no migration): `list_sessions` now joins `student_profiles → users`
+  so `SessionResponse.student_name` is populated — it was always `null`, which would have
+  rendered a list of blank names. `create_session` resolves the student first, returning
+  404 instead of letting a bad id surface as a raw FK 500.
+- Note: counselor **availability was already built and live** (`CounselorAvailability.tsx`);
+  only the session lifecycle was missing.
+- Tests: 9 new in `backend/tests/test_counselor_sessions.py` (158 backend total).
+
+### August 4, 2026 — Go-live auth: real email delivery, verification & password reset
+- **Email delivery is live** (`app/email/service.py`): `ResendEmailProvider` added behind the
+  existing `EmailService` ABC — uses `httpx` (already a dependency), so **no new packages**.
+  `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`; a blank key or unknown provider degrades to
+  `noop` (logs the link) instead of crashing. New `try_send()` never raises — a mail outage
+  can't turn a successful signup into a 500. Templates in `app/email/templates.py`
+  (plain-text + inline-styled HTML on the Kio palette; no webfonts).
+- **Email verification completed**: signup now actually sends the link (via FastAPI
+  `BackgroundTasks`, matching the chat hooks idiom, so mail latency never blocks the
+  response). `POST /auth/verify` switched from a bare query param to a JSON body; new
+  `POST /auth/verify/resend`. Frontend `/verify-email` landing page recovers from expired
+  links instead of dead-ending.
+- **Password reset** (new): `POST /auth/password/forgot` + `/auth/password/reset`, with
+  `/forgot-password` and `/reset-password` pages. Forgot **always** returns the same
+  response whether or not the account exists (no enumeration oracle). Reset links are
+  genuinely **single-use with no new table** — the token carries a `pwf` fingerprint of the
+  current `password_hash`, so it stops matching the moment the password changes. Google-only
+  accounts (`password_hash IS NULL`) are told to use Google rather than failing opaquely.
+  A completed reset also sets `is_verified` (it proves inbox control).
+- **Soft enforcement**: `is_verified` added to `UserResponse` (additive) and surfaced as an
+  amber `VerifyBanner` mounted **once inside `ProtectedRoute`** — every signed-in surface
+  gets it from one place. Nothing is blocked while unverified; dismissal is per session.
+  `refreshUser()` added to the auth context so the banner clears without a re-login.
+- **No migration** — `users.is_verified` already existed. New settings: `RESEND_API_KEY`,
+  `EMAIL_FROM`, `EMAIL_REPLY_TO`, `FRONTEND_URL`, `EMAIL_VERIFY_TOKEN_HOURS`,
+  `PASSWORD_RESET_TOKEN_HOURS`.
+- **Google sign-in needed no code** — it was already complete and env-gated; see the new
+  `docs/domain-google-auth-and-email.md` runbook (domain → Resend SPF/DKIM/DMARC → Google
+  Console origins → prod env matrix → smoke test → troubleshooting).
+- Tests: 21 new in `backend/tests/test_auth_email.py` (149 backend total) + 7 frontend.
+
 ### August 3, 2026 — Safety hardening + counselor verdict capture (trust & evaluation)
 - **Chat/signup UX** (prior pass): mobile+email format validation (front + back, E.164-ish
   phone), Comrade replies render Markdown (`react-markdown`), optimistic user message +
