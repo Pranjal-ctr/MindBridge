@@ -7,7 +7,12 @@ __pycache__/
 
 # Environment
 .env
+.env.local
+.env.*.local
 backend/.env
+# ...but the templates must stay tracked.
+!.env.example
+!.env.docker.example
 
 # Node
 node_modules/

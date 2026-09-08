@@ -5,7 +5,7 @@ Centralized settings via pydantic-settings with .env support.
 
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_JWT_SECRET = "mindbridge-dev-secret-key-change-in-production"
@@ -77,15 +77,47 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""   # Reserved for future server-side auth-code flows
 
     # -------------------------------------------------------------------
-    # Email delivery (interface only for now -- see app/email/)
+    # Email delivery (see app/email/)
     # -------------------------------------------------------------------
-    EMAIL_PROVIDER: str = "noop"  # noop | resend | sendgrid | ses | smtp (future)
+    EMAIL_PROVIDER: str = "noop"  # noop | resend (sendgrid | ses | smtp future)
+    RESEND_API_KEY: str = ""      # Required for EMAIL_PROVIDER=resend; blank falls back to noop
+    EMAIL_FROM: str = "Kio <onboarding@resend.dev>"  # Must be on a domain verified with the provider
+    EMAIL_REPLY_TO: str = ""      # Optional Reply-To (e.g. support@yourdomain)
+
+    # Public URL of the frontend -- used to build links inside emails
+    # (verification, password reset). Must match the deployed origin in production.
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    # Token lifetimes for emailed one-time links
+    EMAIL_VERIFY_TOKEN_HOURS: int = 24
+    PASSWORD_RESET_TOKEN_HOURS: int = 1
 
     # -------------------------------------------------------------------
     # Pagination
     # -------------------------------------------------------------------
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
+
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """Coerce a platform-supplied URL to the asyncpg driver.
+
+        Render, Railway, Heroku and Fly all inject `postgres://...` (or
+        `postgresql://...`), which SQLAlchemy hands to psycopg2 — a driver we
+        do not install, so the app dies at import with a confusing
+        ModuleNotFoundError rather than anything about the database. Rewriting
+        the scheme here means DATABASE_URL can be wired straight from the
+        platform's own secret with no manual editing.
+
+        An explicit `+driver` is always left alone.
+        """
+        if "+" in v.split("://", 1)[0]:
+            return v
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix):]
+        return v
 
     @model_validator(mode="after")
     def _forbid_dev_secret_in_production(self) -> "Settings":

@@ -1,0 +1,34 @@
+# Line-ending policy.
+#
+# This repo is developed on Windows with core.autocrlf=true, which rewrites
+# checked-out files to CRLF. That is harmless for source, but fatal for files a
+# Linux container executes or parses: a shell script with a CRLF shebang fails
+# as `/bin/sh^M: no such file or directory`, which names neither the script nor
+# the real problem. The rules below pin those files to LF regardless of local
+# git config.
+
+* text=auto
+
+# Executed inside containers — must be LF.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+.dockerignore   text eol=lf
+
+# Parsed by Linux tooling (nginx, docker compose, CI, host blueprints).
+*.conf          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Netlify/Cloudflare rewrite rules.
+_redirects      text eol=lf
+
+# Binary — never touch.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary
+*.pdf           binary

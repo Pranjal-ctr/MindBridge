@@ -33,10 +33,53 @@ jobs:
           cache: pip
       - name: Install dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
       - name: Run tests
         working-directory: backend
         run: pytest tests/ -q
+
+  # The migration chain is what actually builds the production schema — tests
+  # build theirs from the models via create_all and never exercise it. Without
+  # this job, a broken or missing revision is only discovered during a deploy.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mindbridge_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/mindbridge_migrations
+      JWT_SECRET_KEY: ci-test-secret-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Apply migrations from scratch
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Verify a single head revision
+        working-directory: backend
+        # Two heads means someone branched the chain; Alembic will not resolve
+        # it automatically and the next deploy would fail mid-release.
+        run: |
+          heads=$(alembic heads | grep -c '(head)' || true)
+          echo "head revisions: $heads"
+          test "$heads" -eq 1
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -48,5 +91,36 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      # `vite build` does not typecheck. Without this step tsc errors ship.
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test
       - name: Build
         run: npm run build
+
+  # Builds both images on every PR so a Dockerfile can't silently rot between
+  # deploys. Build only — nothing is pushed or released from CI.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          build-args: |
+            VITE_API_BASE_URL=https://api.example.com
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,31 @@
+# Frontend build context. node_modules is the big one — `npm ci` reinstalls
+# from the lockfile inside the image, so shipping the host copy would only
+# slow the build and risk platform-specific binaries leaking in.
+
+node_modules/
+dist/
+.vite/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# The backend has its own image and build context.
+backend/
+
+.git/
+.github/
+.claude/
+.vscode/
+.idea/
+
+# Not needed to build the bundle.
+docs/
+guidelines/
+Rebranding/
+*.md
+!README.md
+
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+# SPA fallback for Netlify / Cloudflare Pages.
+#
+# Vite copies public/ into dist/ verbatim, so this ships with the build.
+# Without it, deep links such as /student, /verify-email and /reset-password
+# return 404 — including the links Kio emails for verification and password
+# reset. The nginx equivalent lives in deploy/nginx.conf; the Vercel
+# equivalent in vercel.json.
+#
+# 200 (rewrite), not 301/302: the browser must keep the original URL so React
+# Router can read the ?token= query parameter off it.
+
+/*    /index.html   200

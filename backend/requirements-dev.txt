@@ -1,0 +1,8 @@
+# Kio Backend — development & test dependencies.
+# Kept separate from requirements.txt so the production image installs neither
+# pytest nor its tree. CI installs this file; the Dockerfile installs the other.
+
+-r requirements.txt
+
+pytest==8.4.2
+pytest-asyncio==0.25.3

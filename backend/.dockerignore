@@ -1,0 +1,28 @@
+# Keep the build context small and secrets out of the image.
+
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Never bake real credentials into a layer.
+.env
+.env.*
+!.env.example
+
+# Tests and dev-only tooling are not needed at runtime.
+tests/
+test_phase4.py
+requirements-dev.txt
+pyrightconfig.json
+
+# Docs
+README.md
+docs/
+
+.git/
+.gitignore

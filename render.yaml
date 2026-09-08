@@ -1,0 +1,133 @@
+# Kio — Render Blueprint (one worked example of a real deployment)
+#
+# This is not the only supported host. Everything here is plain Docker plus a
+# managed Postgres, so Railway / Fly.io / Elastic Beanstalk / a VPS running
+# docker-compose all work the same way — see docs/deployment.md for the
+# equivalents. This file exists so there is at least one path you can follow
+# top to bottom without inventing anything.
+#
+#   1. Push this file to the default branch.
+#   2. Render dashboard → New → Blueprint → pick the repo.
+#   3. Fill in the values marked `sync: false` (they are secrets; Render
+#      prompts for each and never stores them in git).
+#
+# Two ordering facts that bite people, both handled below:
+#   * VITE_* are compiled into the frontend bundle, so the API URL must be
+#     known at BUILD time. It is hardcoded here rather than linked, because a
+#     service reference would resolve after the build.
+#   * Migrations run as a preDeployCommand, so the schema is upgraded once per
+#     release instead of racing from every starting instance.
+
+databases:
+  - name: kio-postgres
+    databaseName: mindbridge
+    user: kio
+    plan: basic-256mb        # smallest plan with automated daily backups
+    postgresMajorVersion: "15"
+    ipAllowList: []          # private network only; no public ingress
+
+services:
+  # -----------------------------------------------------------------
+  # Backend API
+  # -----------------------------------------------------------------
+  - type: web
+    name: kio-api
+    runtime: docker
+    plan: starter
+    region: singapore        # closest to the initial user base; move if yours differs
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+
+    # Runs once per deploy, after the image builds and before traffic shifts.
+    # Keeping migrations here (not in the entrypoint) is what makes it safe to
+    # scale past one instance later.
+    preDeployCommand: alembic upgrade head
+
+    envVars:
+      - key: RUN_MIGRATIONS
+        value: "false"       # preDeployCommand owns this now
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kio-postgres
+          property: connectionString
+        # NOTE: Render emits a `postgres://` URL. The app needs the asyncpg
+        # driver prefix. app/config.py normalises this — see the validator.
+
+      - key: JWT_SECRET_KEY
+        generateValue: true  # Render generates a strong secret and keeps it
+
+      # Must be the exact frontend origin, as a JSON array.
+      - key: CORS_ORIGINS
+        value: '["https://kio-web.onrender.com"]'
+      - key: FRONTEND_URL
+        value: https://kio-web.onrender.com
+
+      # Single worker: the rate limiter and the crisis/intelligence background
+      # pipeline are both per-process today. See backend/docker-entrypoint.sh.
+      - key: WEB_CONCURRENCY
+        value: "1"
+
+      # --- Secrets: Render prompts for these on first deploy ---------
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false
+
+  # -----------------------------------------------------------------
+  # Frontend (static)
+  # -----------------------------------------------------------------
+  - type: web
+    name: kio-web
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+
+    envVars:
+      # Build-time. Hardcoded rather than `fromService`, because the bundle is
+      # compiled before service links resolve. If you rename kio-api or attach
+      # a custom domain, change this and redeploy — a restart will not do it.
+      - key: VITE_API_BASE_URL
+        value: https://kio-api.onrender.com
+      - key: VITE_GOOGLE_CLIENT_ID
+        sync: false
+
+    # SPA fallback. /student, /verify-email and /reset-password have no file on
+    # disk; without this every deep link — including emailed reset links — 404s.
+    # `rewrite` preserves the URL so React Router can still read ?token=.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
