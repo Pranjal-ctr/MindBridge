@@ -12,6 +12,10 @@ export interface SignupRequest {
   last_name: string;
   role: 'student' | 'parent' | 'counselor' | 'school_admin';
   phone: string;
+  /** ISO date (YYYY-MM-DD). Required — drives the server-side age gate. */
+  date_of_birth: string;
+  accept_terms: boolean;
+  accept_privacy: boolean;
   school_code?: string | null;
   invite_code?: string | null;
 }
@@ -38,8 +42,18 @@ export interface UserResponse {
   phone: string | null;
   profile_image: string | null;
   is_active: boolean;
+  /** Email address confirmed via the verification link. Google sign-ups start verified. */
+  is_verified: boolean;
   last_login: string | null;
   created_at: string;
+  date_of_birth: string | null;
+  /** null on accounts created before the age gate existed. */
+  guardian_consent_status:
+    | 'not_required'
+    | 'pending'
+    | 'granted'
+    | 'denied'
+    | null;
 }
 
 export interface AuthResponse {
@@ -64,6 +78,10 @@ export interface GoogleCompleteRequest {
   registration_token: string;
   role: 'student' | 'parent';
   phone: string;
+  /** Google verifies an email address, not an age — the gate applies here too. */
+  date_of_birth: string;
+  accept_terms: boolean;
+  accept_privacy: boolean;
   school_code?: string | null;
   invite_code?: string | null;
 }
@@ -427,6 +445,71 @@ export interface CounselorStudentListResponse {
   total: number;
 }
 
+// ── Full user profile (GET/PUT /users/me) ─────────────────────────────
+
+export interface StudentProfileData {
+  student_id: string;
+  admission_number: string | null;
+  age: number | null;
+  gender: string | null;
+  wellness_score: number | null;
+  risk_level: string;
+}
+
+export interface UserProfileResponse {
+  user_id: string;
+  tenant_id: string;
+  email: string;
+  role: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  profile_image: string | null;
+  is_active: boolean;
+  last_login: string | null;
+  created_at: string;
+  updated_at: string;
+  student_profile: StudentProfileData | null;
+}
+
+// ── Counselor Sessions & Notes ────────────────────────────────────────
+
+export type CounselorSessionStatus =
+  | 'scheduled'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'no_show';
+
+export interface CounselorSession {
+  counselor_session_id: string;
+  student_id: string;
+  counselor_id: string;
+  scheduled_at: string;
+  status: CounselorSessionStatus;
+  ai_summary: string | null;
+  created_at: string;
+  /** Joined from the student's user row; null only on legacy rows. */
+  student_name: string | null;
+}
+
+export interface CounselorSessionListResponse {
+  sessions: CounselorSession[];
+  total: number;
+}
+
+export interface CounselorSessionNote {
+  note_id: string;
+  counselor_session_id: string;
+  counselor_id: string;
+  note_text: string;
+  created_at: string;
+}
+
+export interface CounselorNoteListResponse {
+  notes: CounselorSessionNote[];
+}
+
 // ── Weekly Report ─────────────────────────────────────────────────────
 
 export interface WeeklyReportResponse {
@@ -586,6 +669,122 @@ export interface BookResponse {
   scheduled_at: string;
   status: string;
   message: string;
+}
+
+// ── Consent & age gate ────────────────────────────────────────────────
+
+export interface PolicyVersions {
+  terms_version: string;
+  privacy_version: string;
+}
+
+export interface ConsentRecord {
+  consent_id: string;
+  consent_type: 'terms' | 'privacy' | 'guardian';
+  policy_version: string;
+  granted_at: string;
+  granted_by_email: string | null;
+  verification_method: string | null;
+  revoked_at: string | null;
+}
+
+export interface ConsentStatus {
+  date_of_birth: string | null;
+  age: number | null;
+  is_minor: boolean;
+  terms_version: string;
+  privacy_version: string;
+  has_accepted_terms: boolean;
+  has_accepted_privacy: boolean;
+  /** Consented to an older version — prompt to re-accept, not to first-accept. */
+  needs_reconsent: boolean;
+  guardian_consent_status: 'not_required' | 'pending' | 'granted' | 'denied' | 'unknown';
+  guardian_email: string | null;
+  records: ConsentRecord[];
+}
+
+export interface GuardianConsentContext {
+  student_first_name: string;
+  student_last_name: string;
+  school_name: string | null;
+  terms_version: string;
+  privacy_version: string;
+  already_decided: boolean;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────
+
+export interface NotificationItem {
+  notification_id: string;
+  user_id: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface NotificationListResponse {
+  notifications: NotificationItem[];
+  total: number;
+  unread_count: number;
+}
+
+// ── School Analytics ──────────────────────────────────────────────────
+
+export interface RiskBucket {
+  /** Stable key — use this, not `name`, for colour/order logic. */
+  level: 'green' | 'yellow' | 'red' | 'critical';
+  name: string;
+  value: number;
+  color: string;
+}
+
+/**
+ * Named distinctly from the parent-dashboard `WellnessTrendPoint` above, which
+ * is a per-child daily series. Same concept, different grain and shape —
+ * sharing the name silently merged the two declarations.
+ */
+export interface SchoolWellnessTrendPoint {
+  month: string;
+  /** "Mar" repeats across years; this disambiguates. */
+  month_start: string;
+  /** null = no scores recorded that month. Render as a gap, never as 0. */
+  score: number | null;
+  students: number;
+}
+
+export interface StressCategory {
+  category: string;
+  students: number;
+}
+
+export interface CounselorActivity {
+  active_counselors: number;
+  sessions_last_30d: number;
+  students_seen_last_30d: number;
+  upcoming_sessions: number;
+}
+
+export interface AnalyticsOverview {
+  school_name: string;
+  total_students: number;
+  students_with_wellness_data: number;
+  /** null = nothing recorded yet. Distinct from a genuine score of 0. */
+  avg_wellness_score: number | null;
+  checked_in_last_7d: number;
+  checkin_participation: number;
+  counselors: CounselorActivity;
+  risk_distribution: RiskBucket[];
+  wellness_trend: SchoolWellnessTrendPoint[];
+  stress_by_category: StressCategory[];
+  /**
+   * True when the school is too small to break down without identifying
+   * individuals. All distributions come back empty — say so explicitly
+   * rather than rendering empty charts.
+   */
+  cohort_suppressed: boolean;
+  min_cohort_size: number;
+  generated_at: string;
 }
 
 // ── API Error ─────────────────────────────────────────────────────────

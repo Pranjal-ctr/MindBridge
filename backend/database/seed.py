@@ -98,6 +98,10 @@ async def seed():
             email="sarah.johnson@student.rhs.edu",
             password_hash=default_password, role="student",
             first_name="Sarah", last_name="Johnson",
+            date_of_birth=date(2010, 6, 15),
+            # Demo minors, pre-approved so the seeded walkthrough is not
+            # blocked behind a consent banner.
+            guardian_consent_status="granted",
         ))
         db.add(StudentProfile(
             student_id=student_id, user_id=student_user_id, class_id=class_id,
@@ -113,6 +117,10 @@ async def seed():
             email="mike.thompson@student.rhs.edu",
             password_hash=default_password, role="student",
             first_name="Mike", last_name="Thompson",
+            date_of_birth=date(2009, 6, 15),
+            # Demo minors, pre-approved so the seeded walkthrough is not
+            # blocked behind a consent banner.
+            guardian_consent_status="granted",
         ))
         db.add(StudentProfile(
             student_id=mike_student_id, user_id=mike_user_id, class_id=class_id,
@@ -128,6 +136,10 @@ async def seed():
             email="emily.rodriguez@student.rhs.edu",
             password_hash=default_password, role="student",
             first_name="Emily", last_name="Rodriguez",
+            date_of_birth=date(2011, 6, 15),
+            # Demo minors, pre-approved so the seeded walkthrough is not
+            # blocked behind a consent banner.
+            guardian_consent_status="granted",
         ))
         db.add(StudentProfile(
             student_id=emily_student_id, user_id=emily_user_id, class_id=class_id,
@@ -160,6 +172,8 @@ async def seed():
             email="jennifer.martinez@rhs.edu",
             password_hash=default_password, role="counselor",
             first_name="Jennifer", last_name="Martinez",
+            date_of_birth=date(1985, 3, 22),
+            guardian_consent_status="not_required",
         ))
         db.add(CounselorProfile(
             counselor_id=counselor_id, user_id=counselor_user_id,

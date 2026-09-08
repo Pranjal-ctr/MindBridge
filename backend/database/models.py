@@ -146,6 +146,14 @@ class User(Base, FullTimestampMixin):
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     # Soft delete: retained for audit trails; is_active=False blocks login
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Age gate (migration 015). A birth date, not student_profiles.age: that is
+    # an optional self-reported snapshot that silently goes stale, and an age
+    # gate cannot be built on it.
+    date_of_birth: Mapped[Optional[date]] = mapped_column(Date)
+    # not_required (adult) | pending | granted | denied. NULL means unknown —
+    # accounts created before the age gate existed. Distinct from
+    # not_required on purpose, so a backfill can find them.
+    guardian_consent_status: Mapped[Optional[str]] = mapped_column(String(20))
 
     # Relationships
     tenant: Mapped[Tenant] = relationship(back_populates="users")
@@ -163,6 +171,49 @@ class User(Base, FullTimestampMixin):
     )
     notifications: Mapped[list[Notification]] = relationship(back_populates="user")
     audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="user")
+    consents: Mapped[list[UserConsent]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class UserConsent(Base):
+    """Append-only record of a consent grant (migration 015).
+
+    Rows are never updated in place. Consent is a claim about a specific moment
+    and a specific published policy version, so withdrawing sets `revoked_at`
+    and re-consenting to a new version inserts a new row. The resulting history
+    is the evidence that matters if anyone ever asks what a user agreed to and
+    when.
+    """
+    __tablename__ = "user_consents"
+    __table_args__ = (
+        Index("ix_user_consents_user_type", "user_id", "consent_type"),
+        Index(
+            "ix_user_consents_active",
+            "consent_type",
+            "policy_version",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    consent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    consent_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45))
+    user_agent: Mapped[Optional[str]] = mapped_column(Text)
+    granted_by_email: Mapped[Optional[str]] = mapped_column(String(255))
+    verification_method: Mapped[Optional[str]] = mapped_column(String(30))
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="consents")
 
 
 class Class(Base, TimestampMixin):

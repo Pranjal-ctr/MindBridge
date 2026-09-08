@@ -1,11 +1,12 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Mail, Lock, User, School, Loader2, AlertCircle, Phone, KeyRound } from 'lucide-react';
+import { ArrowLeft, Mail, Lock, User, School, Loader2, AlertCircle, Phone, KeyRound, Cake } from 'lucide-react';
 import { KioLogo } from './KioLogo';
 import { Disclaimer } from './Disclaimer';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../../lib/auth-context';
 import { getDashboardRoute } from '../../lib/protected-route';
 import { googleClientId, googleEnabled, loadGoogleScript } from '../../lib/google';
+import { AGE_OF_SELF_CONSENT, MINIMUM_AGE, checkAge } from '../../lib/policy';
 import type { AxiosError } from 'axios';
 import type { ApiError } from '../../lib/types';
 
@@ -22,33 +23,58 @@ function emailError(value: string): string | null {
   return EMAIL_RE.test(value.trim()) ? null : 'Enter a valid email address.';
 }
 
+/**
+ * Advisory age check. The server's `enforce_age_gate` is the real gate; this
+ * exists so nobody fills in an entire form only to be rejected on submit.
+ */
+function dobError(value: string): string | null {
+  const result = checkAge(value);
+  if (result.status === 'invalid') return 'Enter a valid date of birth.';
+  if (result.status === 'too-young') {
+    return `Kio is not available under ${MINIMUM_AGE}. If you're a parent looking for support, you can create a parent account.`;
+  }
+  return null;
+}
+
 export function LoginSignup() {
   const navigate = useNavigate();
   const location = useLocation();
   const { login, signup, loginWithGoogle, completeGoogleSignup } = useAuth();
 
   const [isSignup, setIsSignup] = useState(false);
-  const [userType, setUserType] = useState<'student' | 'parent' | 'counselor' | 'school_admin'>('student');
+  // Only ever student/parent: staff accounts are provisioned, never self-registered.
+  const [userType, setUserType] = useState<'student' | 'parent'>('student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [schoolCode, setSchoolCode] = useState('');
   const [phone, setPhone] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const [acceptedPolicies, setAcceptedPolicies] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<{ email?: string; phone?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{
+    email?: string;
+    phone?: string;
+    dateOfBirth?: string;
+  }>({});
 
   // Google "complete your profile" step (new Google users need mobile + institution code)
   const [googleRegToken, setGoogleRegToken] = useState<string | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const googleBtnRef = useRef<HTMLDivElement | null>(null);
 
-  // School code is required for student, parent, school_admin — not counselor
-  const showSchoolCode = userType !== 'counselor';
+  // Both self-signup roles (student, parent) belong to a school, so the code is
+  // always required here. Counselors — the one role without it — are provisioned.
+  const showSchoolCode = true;
   // Invite code shown only for parent signup
   const showInviteCode = isSignup && userType === 'parent';
+
+  // Drives the "a guardian will be asked to approve" hint. Advisory only — the
+  // server decides; this just avoids surprising a 15-year-old after submit.
+  const isMinorSignup = checkAge(dateOfBirth).status === 'minor';
 
   // Get redirect path from location state (set by ProtectedRoute)
   const from = (location.state as { from?: string })?.from;
@@ -108,9 +134,13 @@ export function LoginSignup() {
     if (!googleRegToken) return;
     setError(null);
 
+    const errs: { phone?: string; dateOfBirth?: string } = {};
     const pErr = phoneError(phone);
-    if (pErr) {
-      setFieldErrors({ phone: pErr });
+    if (pErr) errs.phone = pErr;
+    const dErr = dobError(dateOfBirth);
+    if (dErr) errs.dateOfBirth = dErr;
+    if (Object.keys(errs).length > 0) {
+      setFieldErrors(errs);
       return;
     }
     setFieldErrors({});
@@ -121,6 +151,9 @@ export function LoginSignup() {
         registration_token: googleRegToken,
         role: userType === 'parent' ? 'parent' : 'student',
         phone,
+        date_of_birth: dateOfBirth,
+        accept_terms: true,
+        accept_privacy: true,
         school_code: schoolCode || null,
         invite_code: userType === 'parent' ? inviteCode || null : null,
       });
@@ -139,11 +172,13 @@ export function LoginSignup() {
 
     // Validate email + mobile format on signup before hitting the API.
     if (isSignup) {
-      const errs: { email?: string; phone?: string } = {};
+      const errs: { email?: string; phone?: string; dateOfBirth?: string } = {};
       const eErr = emailError(email);
       if (eErr) errs.email = eErr;
       const pErr = phoneError(phone);
       if (pErr) errs.phone = pErr;
+      const dErr = dobError(dateOfBirth);
+      if (dErr) errs.dateOfBirth = dErr;
       if (Object.keys(errs).length > 0) {
         setFieldErrors(errs);
         return;
@@ -164,6 +199,11 @@ export function LoginSignup() {
           last_name: lastName,
           role: userType,
           phone,
+          date_of_birth: dateOfBirth,
+          // The checkbox is `required`, and the server rejects false, so
+          // reaching here means the box was ticked.
+          accept_terms: true,
+          accept_privacy: true,
           school_code: showSchoolCode ? schoolCode || null : null,
           invite_code: showInviteCode ? inviteCode || null : null,
         });
@@ -196,25 +236,15 @@ export function LoginSignup() {
   };
 
   const toggleMode = () => {
-    const next = !isSignup;
-    setIsSignup(next);
+    setIsSignup(!isSignup);
     setError(null);
-    // Staff roles cannot self-register — reset selection when switching to signup
-    if (next && (userType === 'counselor' || userType === 'school_admin')) {
-      setUserType('student');
-    }
   };
 
-  // Self-signup is limited to student/parent; staff accounts are provisioned by Kio
+  // Self-signup is limited to student/parent; staff accounts are provisioned by Kio.
+  // Login has no role picker at all — the server returns the account's real role.
   const roleOptions = [
     { type: 'student' as const, icon: User, label: 'Student' },
     { type: 'parent' as const, icon: User, label: 'Parent' },
-    ...(!isSignup
-      ? [
-          { type: 'counselor' as const, icon: User, label: 'Counselor' },
-          { type: 'school_admin' as const, icon: School, label: 'School Admin' },
-        ]
-      : []),
   ];
 
   // Google new-user: collect only mobile + institution code (name/email/photo come from Google)
@@ -281,6 +311,34 @@ export function LoginSignup() {
                     />
                   </div>
                   {fieldErrors.phone && <p className="mt-1.5 text-xs text-red-600">{fieldErrors.phone}</p>}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-2 block">Date of Birth</label>
+                  <div className="relative">
+                    <Cake className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                    <input
+                      type="date"
+                      required
+                      value={dateOfBirth}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => { setDateOfBirth(e.target.value); if (fieldErrors.dateOfBirth) setFieldErrors((p) => ({ ...p, dateOfBirth: undefined })); }}
+                      onBlur={(e) => setFieldErrors((p) => ({ ...p, dateOfBirth: dobError(e.target.value) ?? undefined }))}
+                      className={`w-full pl-11 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 bg-input-background ${
+                        fieldErrors.dateOfBirth ? 'border-red-400 focus:ring-red-300' : 'border-border focus:ring-ring'
+                      }`}
+                    />
+                  </div>
+                  {fieldErrors.dateOfBirth ? (
+                    <p className="mt-1.5 text-xs text-red-600">{fieldErrors.dateOfBirth}</p>
+                  ) : isMinorSignup ? (
+                    /* Told before submitting, not after: a 15-year-old should
+                       know a parent will be emailed before they hand over one. */
+                    <p className="mt-1.5 text-xs text-amber-700">
+                      Because you&apos;re under {AGE_OF_SELF_CONSENT}, we&apos;ll ask a parent or
+                      guardian to approve your account after you sign up.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div>
@@ -377,32 +435,35 @@ export function LoginSignup() {
               </div>
             )}
 
-            {/* User Type Selection */}
-            <div className="mb-6">
-              <label className="text-sm font-medium text-foreground mb-3 block">I am a...</label>
-              <div className="grid grid-cols-2 gap-3">
-                {roleOptions.map((option) => (
-                  <button
-                    key={option.type}
-                    type="button"
-                    onClick={() => setUserType(option.type)}
-                    className={`flex items-center gap-2 px-4 py-3 border-2 rounded-xl transition ${
-                      userType === option.type
-                        ? 'border-primary bg-blue-50 text-primary'
-                        : 'border-border bg-card text-muted-foreground hover:border-primary/50'
-                    }`}
-                  >
-                    <option.icon className="w-4 h-4" />
-                    <span className="text-sm font-medium">{option.label}</span>
-                  </button>
-                ))}
-              </div>
-              {isSignup && (
+            {/* Role selection is a SIGNUP-only concern. On login the account's
+                role comes back from the server and drives the redirect, so asking
+                for it here would be decorative at best and misleading at worst
+                (picking "Counselor" never made a student log in as one). */}
+            {isSignup && (
+              <div className="mb-6">
+                <label className="text-sm font-medium text-foreground mb-3 block">I am a...</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {roleOptions.map((option) => (
+                    <button
+                      key={option.type}
+                      type="button"
+                      onClick={() => setUserType(option.type)}
+                      className={`flex items-center gap-2 px-4 py-3 border-2 rounded-xl transition ${
+                        userType === option.type
+                          ? 'border-primary bg-blue-50 text-primary'
+                          : 'border-border bg-card text-muted-foreground hover:border-primary/50'
+                      }`}
+                    >
+                      <option.icon className="w-4 h-4" />
+                      <span className="text-sm font-medium">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   Counselor and School Admin accounts are set up by your school — contact your administrator.
                 </p>
-              )}
-            </div>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
               {isSignup && (
@@ -473,6 +534,36 @@ export function LoginSignup() {
                 </div>
               )}
 
+              {isSignup && (
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-2 block">Date of Birth</label>
+                  <div className="relative">
+                    <Cake className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                    <input
+                      type="date"
+                      required
+                      value={dateOfBirth}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => { setDateOfBirth(e.target.value); if (fieldErrors.dateOfBirth) setFieldErrors((p) => ({ ...p, dateOfBirth: undefined })); }}
+                      onBlur={(e) => setFieldErrors((p) => ({ ...p, dateOfBirth: dobError(e.target.value) ?? undefined }))}
+                      className={`w-full pl-11 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 bg-input-background ${
+                        fieldErrors.dateOfBirth ? 'border-red-400 focus:ring-red-300' : 'border-border focus:ring-ring'
+                      }`}
+                    />
+                  </div>
+                  {fieldErrors.dateOfBirth ? (
+                    <p className="mt-1.5 text-xs text-red-600">{fieldErrors.dateOfBirth}</p>
+                  ) : isMinorSignup ? (
+                    /* Told before submitting, not after: a 15-year-old should
+                       know a parent will be emailed before they hand over one. */
+                    <p className="mt-1.5 text-xs text-amber-700">
+                      Because you&apos;re under {AGE_OF_SELF_CONSENT}, we&apos;ll ask a parent or
+                      guardian to approve your account after you sign up.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
               {showInviteCode && (
                 <div>
                   <label className="text-sm font-medium text-foreground mb-2 block">Parent Invite Code</label>
@@ -533,21 +624,40 @@ export function LoginSignup() {
                     <input type="checkbox" className="w-4 h-4 rounded border-border" />
                     <span className="text-muted-foreground">Remember me</span>
                   </label>
-                  <a href="#" className="text-primary hover:underline">
+                  <Link to="/forgot-password" className="text-primary hover:underline">
                     Forgot password?
-                  </a>
+                  </Link>
                 </div>
               )}
 
               {isSignup && (
                 <div className="flex items-start gap-2 text-sm">
-                  <input type="checkbox" className="w-4 h-4 mt-1 rounded border-border" required />
-                  <span className="text-muted-foreground">
+                  {/* Was an unbound checkbox next to two href="#" links, so
+                      nothing was recorded and nothing was readable. Now the
+                      state is submitted and the documents actually exist. */}
+                  <input
+                    id="accept-policies"
+                    type="checkbox"
+                    className="w-4 h-4 mt-1 rounded border-border"
+                    checked={acceptedPolicies}
+                    onChange={(e) => setAcceptedPolicies(e.target.checked)}
+                    required
+                  />
+                  <label htmlFor="accept-policies" className="text-muted-foreground cursor-pointer">
                     I agree to the{' '}
-                    <a href="#" className="text-primary hover:underline">Terms of Service</a>
+                    <Link to="/terms" target="_blank" className="text-primary hover:underline">
+                      Terms of Service
+                    </Link>
                     {' '}and{' '}
-                    <a href="#" className="text-primary hover:underline">Privacy Policy</a>
-                  </span>
+                    <Link to="/privacy" target="_blank" className="text-primary hover:underline">
+                      Privacy Policy
+                    </Link>
+                    {isMinorSignup && (
+                      <span className="block mt-1 text-xs">
+                        A parent or guardian will also be asked to approve.
+                      </span>
+                    )}
+                  </label>
                 </div>
               )}
 

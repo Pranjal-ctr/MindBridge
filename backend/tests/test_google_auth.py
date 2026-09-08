@@ -49,6 +49,11 @@ async def test_google_signup_completion(client: AsyncClient, test_tenant, monkey
         "role": "student",
         "phone": "+1 555 222 3333",
         "school_code": test_tenant.school_code,
+        # Google verifies an email address, not an age — the completion step
+        # carries the same age gate and consent as password signup.
+        "date_of_birth": "2000-01-01",
+        "accept_terms": True,
+        "accept_privacy": True,
     })
     assert done.status_code == 201
     body = done.json()

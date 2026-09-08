@@ -11,9 +11,7 @@ from app.config import settings
 from database.session import engine
 
 
-# -------------------------------------------------------------------
 # Lifespan: startup/shutdown events
-# -------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage DB connection pool lifecycle."""
@@ -21,9 +19,7 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-# -------------------------------------------------------------------
 # Application Factory
-# -------------------------------------------------------------------
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -46,14 +42,13 @@ app = FastAPI(
         {"name": "💳 Subscriptions", "description": "Subscription and payment management"},
         {"name": "🔗 Linking", "description": "Parent-student account linking with invite codes"},
         {"name": "🎓 Onboarding", "description": "Student first-login questionnaire"},
+        {"name": "📜 Consent", "description": "Age gate, policy consent, and guardian approval"},
         {"name": "⚙️ Admin", "description": "Kio platform administration"},
         {"name": "🏥 Health", "description": "System health checks"},
     ],
 )
 
-# -------------------------------------------------------------------
 # CORS Middleware
-# -------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -62,9 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -------------------------------------------------------------------
 # Import and register routers
-# -------------------------------------------------------------------
 from app.auth.router import router as auth_router  # noqa: E402
 from app.users.router import router as users_router  # noqa: E402
 from app.conversations.router import router as conversations_router  # noqa: E402
@@ -79,6 +72,7 @@ from app.subscriptions.router import router as subscriptions_router  # noqa: E40
 from app.admin.router import router as admin_router  # noqa: E402
 from app.linking.router import router as linking_router  # noqa: E402
 from app.onboarding.router import router as onboarding_router  # noqa: E402
+from app.consent.router import router as consent_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/auth", tags=["🔐 Auth"])
 app.include_router(users_router, prefix="/users", tags=["👤 Users"])
@@ -94,11 +88,13 @@ app.include_router(subscriptions_router, prefix="/subscriptions", tags=["💳 Su
 app.include_router(admin_router, prefix="/admin", tags=["⚙️ Admin"])
 app.include_router(linking_router, prefix="/linking", tags=["🔗 Linking"])
 app.include_router(onboarding_router, prefix="/onboarding", tags=["🎓 Onboarding"])
+app.include_router(consent_router, prefix="/consent", tags=["📜 Consent"])
 
 
-# -------------------------------------------------------------------
+
 # Health Check Endpoints
-# -------------------------------------------------------------------
+
+
 @app.get("/health", tags=["🏥 Health"])
 async def health_check():
     """Basic health check."""
