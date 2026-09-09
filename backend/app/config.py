@@ -49,10 +49,27 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------
     # CORS
     # -------------------------------------------------------------------
+    # Local development only. Vite claims the next free port when its default
+    # is taken (5173 -> 5174 -> 5175), and it binds IPv6 on some Windows
+    # setups, so the browser's Origin can legitimately be any of these forms.
+    # A missing entry surfaces as a 400 on the preflight, which the browser
+    # reports to the app as a generic network failure — an error that reads
+    # like the API is down when it is in fact answering.
+    # Production overrides this wholesale via the CORS_ORIGINS env var; none
+    # of these loopback origins is reachable from another machine.
     CORS_ORIGINS: list[str] = [
-        "http://localhost:5173",
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://[::1]:3000",
+        "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://[::1]:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://[::1]:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+        "http://[::1]:5175",
     ]
 
     # -------------------------------------------------------------------

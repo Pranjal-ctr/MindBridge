@@ -2,6 +2,7 @@
 Kio API — FastAPI Application Entry Point
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,6 +10,36 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from database.session import engine
+
+
+def _configure_logging() -> None:
+    """
+    Give the root logger a handler.
+
+    uvicorn configures only its own loggers, so without this every
+    ``logger.*`` call under ``app/`` propagates to a root logger with no
+    handler and is discarded. Two of those matter:
+
+    * ``auth.service`` logs the email-verification link so local development
+      works with ``EMAIL_PROVIDER=noop`` — unreachable otherwise, since there
+      is no other way to obtain the token.
+    * ``email.service`` logs delivery failures inside ``try_send``, which
+      deliberately never raises. Without a handler a production mail outage
+      is completely silent.
+
+    pytest installs its own root handler, which is why the test suite never
+    caught this.
+    """
+    root = logging.getLogger()
+    if root.handlers:  # respect a host-provided config (pytest, gunicorn, etc.)
+        return
+    logging.basicConfig(
+        level=logging.DEBUG if settings.DEBUG else logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+
+
+_configure_logging()
 
 
 # Lifespan: startup/shutdown events

@@ -7,6 +7,7 @@ import { useAuth } from '../../lib/auth-context';
 import { getDashboardRoute } from '../../lib/protected-route';
 import { googleClientId, googleEnabled, loadGoogleScript } from '../../lib/google';
 import { AGE_OF_SELF_CONSENT, MINIMUM_AGE, checkAge } from '../../lib/policy';
+import { API_BASE_URL } from '../../lib/api';
 import type { AxiosError } from 'axios';
 import type { ApiError } from '../../lib/types';
 
@@ -21,6 +22,24 @@ function phoneError(value: string): string | null {
 
 function emailError(value: string): string | null {
   return EMAIL_RE.test(value.trim()) ? null : 'Enter a valid email address.';
+}
+
+/**
+ * Message for an axios ERR_NETWORK.
+ *
+ * The browser reports a blocked CORS preflight and a genuinely unreachable
+ * server identically: no response reaches JS in either case, so the two are
+ * indistinguishable from here. Saying only "unable to connect" sends people
+ * to restart a server that is running and answering, so name both causes and
+ * the URL actually being called.
+ */
+function networkErrorMessage(): string {
+  return (
+    `Could not reach the API at ${API_BASE_URL}. Either it is not running, ` +
+    `or it rejected this page's origin (${window.location.origin}) — check ` +
+    `the browser console for a CORS error and the server log for a 400 on ` +
+    `the OPTIONS request.`
+  );
 }
 
 /**
@@ -224,7 +243,7 @@ export function LoginSignup() {
         setError(detail.map((d) => d.msg).join(', '));
       } else if (axiosError.message) {
         setError(axiosError.code === 'ERR_NETWORK'
-          ? 'Unable to connect to server. Please try again.'
+          ? networkErrorMessage()
           : axiosError.message
         );
       } else {
