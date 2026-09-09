@@ -671,6 +671,73 @@ export interface BookResponse {
   message: string;
 }
 
+// ── Availability engine (migration 016) ───────────────────────────────
+
+/** 0 = Monday .. 6 = Sunday, matching the backend and Python's weekday(). */
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface CounselorSchedule {
+  schedule_id: string;
+  counselor_id: string;
+  day_of_week: DayOfWeek;
+  /** Local to the counselor's timezone, "HH:MM:SS". */
+  start_time: string;
+  end_time: string;
+  is_active: boolean;
+  effective_from: string | null;
+  effective_until: string | null;
+  /** True when end_time <= start_time, i.e. the interval runs past midnight. */
+  crosses_midnight: boolean;
+}
+
+export interface ScheduleListResponse {
+  schedules: CounselorSchedule[];
+  timezone: string;
+}
+
+export interface CounselorScheduleException {
+  exception_id: string;
+  counselor_id: string;
+  exception_date: string;
+  /** Null start and end mean the whole day. */
+  start_time: string | null;
+  end_time: string | null;
+  /** False = time off, true = extra availability outside the usual pattern. */
+  is_available: boolean;
+  reason: string | null;
+}
+
+export interface ExceptionListResponse {
+  exceptions: CounselorScheduleException[];
+  timezone: string;
+}
+
+export interface SessionSettings {
+  session_duration_minutes: number;
+  buffer_minutes: number;
+  timezone: string;
+}
+
+/** One concrete bookable slot. `start`/`end` are UTC; display_* are formatted. */
+export interface AvailableSlot {
+  counselor_id: string;
+  counselor_name: string;
+  start: string;
+  end: string;
+  duration_minutes: number;
+  display_start: string;
+  display_end: string;
+  display_date: string;
+}
+
+export interface AvailabilitySearchResponse {
+  timezone: string;
+  window_start: string;
+  window_end: string;
+  slots: AvailableSlot[];
+  counselors_considered: number;
+}
+
 // ── Consent & age gate ────────────────────────────────────────────────
 
 export interface PolicyVersions {
