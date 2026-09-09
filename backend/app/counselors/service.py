@@ -5,10 +5,11 @@ Kio Counselors Service
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.counselors.schemas import (
@@ -114,13 +115,33 @@ async def create_session(
     if student is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
 
+    # Sessions need an end (migration 016). A counselor scheduling directly
+    # still gets their configured duration, so their calendar blocks the same
+    # amount of time a student booking would have taken.
+    profile = (await db.execute(
+        select(CounselorProfile).where(CounselorProfile.counselor_id == counselor_id)
+    )).scalar_one_or_none()
+    duration = timedelta(minutes=profile.session_duration_minutes if profile else 30)
+
     session = CounselorSession(
         student_id=payload.student_id,
         counselor_id=counselor_id,
         scheduled_at=payload.scheduled_at,
+        ends_at=payload.scheduled_at + duration,
     )
     db.add(session)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # The overlap constraint applies to counselor-scheduled sessions too:
+        # double-booking is double-booking whoever initiated it.
+        await db.rollback()
+        if "excl_counselor_session_overlap" in str(exc.orig):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That time overlaps a session you already have.",
+            ) from exc
+        raise
     await db.refresh(session)
 
     result = SessionResponse.model_validate(session)
@@ -405,6 +426,10 @@ async def book_slot(
         student_id=student_id,
         counselor_id=slot.counselor_id,
         scheduled_at=slot.start_at,
+        # The legacy slot already carries its own end; use it rather than the
+        # counselor's current duration, so a slot booked under the old model
+        # occupies exactly the time it advertised.
+        ends_at=slot.end_at,
         status="scheduled",
     )
     db.add(session)

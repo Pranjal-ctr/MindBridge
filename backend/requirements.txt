@@ -39,3 +39,10 @@ google-genai==2.10.0
 # Imported directly by app/auth/google.py for Google ID-token verification.
 # Declared explicitly rather than relied on as a google-genai transitive.
 google-auth==2.55.0
+
+# --- Timezone database ----------------------------------------------
+# The availability engine resolves IANA zones (Asia/Kolkata) via zoneinfo.
+# Windows ships no system tz database at all, and slim container images
+# frequently omit it, so zoneinfo falls back to this package. Without it
+# ZoneInfo() raises and every counselor's availability is unresolvable.
+tzdata==2025.2

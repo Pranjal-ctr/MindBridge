@@ -6,19 +6,22 @@ All 27 tables with typed relationships and multi-tenancy support.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     Index,
     func,
@@ -320,11 +323,31 @@ class CounselorProfile(Base, TimestampMixin):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
+    # Session settings (migration 016). Slot length and spacing were previously
+    # implicit in the UI; the availability engine needs them as real values.
+    session_duration_minutes: Mapped[int] = mapped_column(
+        SmallInteger, default=30, server_default="30", nullable=False
+    )
+    buffer_minutes: Mapped[int] = mapped_column(
+        SmallInteger, default=0, server_default="0", nullable=False
+    )
+    # IANA zone. A recurring "09:00" is meaningless without one, and inferring
+    # it from the server would make availability depend on where Kio is hosted.
+    timezone: Mapped[str] = mapped_column(
+        String(64), default="Asia/Kolkata", server_default="Asia/Kolkata", nullable=False
+    )
+
     # Relationships
     user: Mapped[User] = relationship(back_populates="counselor_profile")
     sessions: Mapped[list[CounselorSession]] = relationship(back_populates="counselor")
     notes: Mapped[list[CounselorNote]] = relationship(back_populates="counselor")
     availability: Mapped[list[CounselorAvailability]] = relationship(
+        back_populates="counselor", cascade="all, delete-orphan"
+    )
+    schedules: Mapped[list[CounselorSchedule]] = relationship(
+        back_populates="counselor", cascade="all, delete-orphan"
+    )
+    schedule_exceptions: Mapped[list[CounselorScheduleException]] = relationship(
         back_populates="counselor", cascade="all, delete-orphan"
     )
 
@@ -916,8 +939,22 @@ class CounselorSession(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("counselor_profiles.counselor_id", ondelete="CASCADE")
     )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Migration 016. Overlap detection needs an end, not just a start: without
+    # this column "does 10:00-10:45 clash with 10:30-11:00?" is unanswerable,
+    # and the old booking path could only compare identical start times.
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
     ai_summary: Mapped[Optional[str]] = mapped_column(Text)
+    # Who initiated the booking, for auditability (§28). Null for sessions a
+    # counselor scheduled directly and for rows predating migration 016.
+    booked_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="SET NULL")
+    )
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cancelled_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="SET NULL")
+    )
+    cancellation_reason: Mapped[Optional[str]] = mapped_column(String(500))
 
     # Relationships
     student: Mapped[StudentProfile] = relationship(back_populates="counselor_sessions")
@@ -966,6 +1003,112 @@ class CounselorAvailability(Base, TimestampMixin):
 
     # Relationships
     counselor: Mapped[CounselorProfile] = relationship(back_populates="availability")
+
+
+class CounselorSchedule(Base, TimestampMixin):
+    """
+    One recurring weekly working interval for a counselor.
+
+    Replaces the row-per-bookable-slot model in ``counselor_availability``:
+    a counselor states "Monday 09:00-17:00" once, and concrete slots are
+    derived for whatever date range is actually being viewed. Storing the
+    slots themselves would mean thousands of rows describing a rule that fits
+    in one.
+
+    Times are LOCAL to ``CounselorProfile.timezone`` and stored naive on
+    purpose -- "09:00" is a statement about the counselor's morning, not about
+    a UTC instant, and it must survive daylight-saving changes in zones that
+    have them.
+
+    Overnight intervals are represented in a single row with
+    ``end_time <= start_time``, meaning the interval runs past midnight into
+    the following day. Monday 17:00-01:00 is Monday evening through Tuesday
+    01:00 -- not an invalid same-day range, and not two rows to keep in sync.
+    """
+
+    __tablename__ = "counselor_schedules"
+    __table_args__ = (
+        CheckConstraint(
+            "day_of_week >= 0 AND day_of_week <= 6", name="ck_schedule_day_of_week"
+        ),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_from IS NULL "
+            "OR effective_until >= effective_from",
+            name="ck_schedule_effective_range",
+        ),
+        Index("ix_schedules_counselor_day", "counselor_id", "day_of_week"),
+    )
+
+    schedule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    counselor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("counselor_profiles.counselor_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # 0 = Monday .. 6 = Sunday, matching Python's date.weekday().
+    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    start_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
+    end_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    # Optional validity window, so a counselor can retire a schedule without
+    # deleting the record that explains historical bookings.
+    effective_from: Mapped[Optional[date]] = mapped_column(Date)
+    effective_until: Mapped[Optional[date]] = mapped_column(Date)
+
+    counselor: Mapped[CounselorProfile] = relationship(back_populates="schedules")
+
+
+class CounselorScheduleException(Base, TimestampMixin):
+    """
+    A dated override of the recurring schedule.
+
+    Effective availability is:
+        recurring schedule - unavailable exceptions + additional availability
+
+    Exceptions always win over the recurring rule. ``is_available`` False marks
+    time off (whole day when start/end are null, otherwise just that window);
+    True adds availability on a day the recurring schedule does not cover, such
+    as a one-off Saturday morning.
+    """
+
+    __tablename__ = "counselor_schedule_exceptions"
+    __table_args__ = (
+        CheckConstraint(
+            "(start_time IS NULL AND end_time IS NULL) "
+            "OR (start_time IS NOT NULL AND end_time IS NOT NULL)",
+            name="ck_exception_partial_window",
+        ),
+        CheckConstraint(
+            "is_available = false OR start_time IS NOT NULL",
+            name="ck_exception_additional_needs_window",
+        ),
+        Index("ix_exceptions_counselor_date", "counselor_id", "exception_date"),
+    )
+
+    exception_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    counselor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("counselor_profiles.counselor_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Local date in the counselor's timezone, for the same reason the recurring
+    # times are local: "I am off on the 15th" is a statement about their day.
+    exception_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Null start/end means the whole day.
+    start_time: Mapped[Optional[time]] = mapped_column(Time(timezone=False))
+    end_time: Mapped[Optional[time]] = mapped_column(Time(timezone=False))
+    is_available: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    reason: Mapped[Optional[str]] = mapped_column(String(200))
+
+    counselor: Mapped[CounselorProfile] = relationship(back_populates="schedule_exceptions")
 
 
 class CounselorSchoolAssignment(Base):

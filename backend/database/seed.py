@@ -262,16 +262,19 @@ async def seed():
         # ---------------------------------------------------------------
         db.add(CounselorSession(
             student_id=student_id, counselor_id=counselor_id,
-            scheduled_at=now + timedelta(hours=2), status="scheduled",
+            scheduled_at=now + timedelta(hours=2),
+            ends_at=now + timedelta(hours=2, minutes=30), status="scheduled",
             ai_summary="Student has been experiencing increased anxiety around upcoming final exams.",
         ))
         db.add(CounselorSession(
             student_id=mike_student_id, counselor_id=counselor_id,
-            scheduled_at=now + timedelta(hours=4), status="scheduled",
+            scheduled_at=now + timedelta(hours=4),
+            ends_at=now + timedelta(hours=4, minutes=30), status="scheduled",
         ))
         db.add(CounselorSession(
             student_id=emily_student_id, counselor_id=counselor_id,
-            scheduled_at=now + timedelta(days=1, hours=2), status="scheduled",
+            scheduled_at=now + timedelta(days=1, hours=2),
+            ends_at=now + timedelta(days=1, hours=2, minutes=30), status="scheduled",
             ai_summary="IMMEDIATE FOLLOW-UP RECOMMENDED. Student has expressed persistent feelings of sadness.",
         ))
 

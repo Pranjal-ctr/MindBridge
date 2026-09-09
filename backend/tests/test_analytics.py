@@ -450,6 +450,7 @@ async def test_session_counts_split_completed_and_upcoming(
             student_id=students[0].student_id,
             counselor_id=counselor.counselor_id,
             scheduled_at=now - timedelta(days=days_ago),
+            ends_at=now - timedelta(days=days_ago) + timedelta(minutes=30),
             status="completed",
         ))
     # Outside the 30-day window.
@@ -457,6 +458,7 @@ async def test_session_counts_split_completed_and_upcoming(
         student_id=students[1].student_id,
         counselor_id=counselor.counselor_id,
         scheduled_at=now - timedelta(days=45),
+        ends_at=now - timedelta(days=45) + timedelta(minutes=30),
         status="completed",
     ))
     # Future booking.
@@ -464,6 +466,7 @@ async def test_session_counts_split_completed_and_upcoming(
         student_id=students[2].student_id,
         counselor_id=counselor.counselor_id,
         scheduled_at=now + timedelta(days=2),
+        ends_at=now + timedelta(days=2) + timedelta(minutes=30),
         status="scheduled",
     ))
     await db_session.flush()
