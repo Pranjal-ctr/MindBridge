@@ -1,7 +1,8 @@
 # Kio SaaS App — Project Context
 
-> **Last Updated:** July 11, 2026
-> **Status:** Phase 5 Complete + Kio Rebrand -- Google Auth, Onboarding, Guardians, Platform Counselors & Admin
+> **Last Updated:** September 11, 2026
+> **Status:** Production hardening complete -- availability engine, revocable sessions, observability, consent layer
+> **Tests:** 332 backend (`pytest tests/`) + 42 frontend (`npm test`)
 
 ---
 
@@ -76,15 +77,49 @@ Design MindBridge SaaS App/
 
 ## 🗺️ Routes
 
-| Path             | Component              | Description                          |
-|------------------|------------------------|--------------------------------------|
-| `/`              | LandingPage            | Public marketing/landing page        |
-| `/login`         | LoginSignup            | Auth (login/signup with role select) |
-| `/student`       | StudentDashboard       | AI chat + mood tracking              |
-| `/parent`        | ParentDashboard        | Child's wellness insights            |
-| `/counselor`     | CounselorDashboard     | Student profiles + AI summaries      |
-| `/school`        | SchoolAdminDashboard   | School-wide anonymized analytics     |
-| `/book-counselor`| BookCounselor          | Counselor session booking            |
+**Public**
+
+| Path                | Component            | Description                             |
+|---------------------|----------------------|-----------------------------------------|
+| `/`                 | LandingPage          | Public marketing/landing page           |
+| `/login`            | LoginSignup          | Auth (login/signup with role select)    |
+| `/terms`            | TermsOfService       | Terms of service (pending legal review) |
+| `/privacy`          | PrivacyPolicy        | Privacy policy (pending legal review)   |
+| `/verify-email`     | VerifyEmail          | Email-verification landing + resend     |
+| `/forgot-password`  | ForgotPassword       | Request a password-reset link           |
+| `/reset-password`   | ResetPassword        | Complete a password reset               |
+| `/guardian-consent` | GuardianConsent      | One-time guardian approval link (13–17) |
+
+**Signed-in** (behind `ProtectedRoute`, which also mounts `VerifyBanner`,
+`GuardianConsentBanner`; the `NotificationBell` is mounted per-dashboard + `AdminLayout`)
+
+| Path                  | Component            | Description                          |
+|-----------------------|----------------------|--------------------------------------|
+| `/student`            | StudentDashboard     | Comrade chat + check-in + mood        |
+| `/student/family`     | StudentInviteCode    | Guardian management + invite codes    |
+| `/student/growth`     | StudentGrowthProfile | Wellness trend + personal insights    |
+| `/student/activities` | StudentActivities    | Weekly activities + AI summary        |
+| `/student/profile`    | StudentProfile       | Age, gender, account details          |
+| `/parent`             | ParentDashboard      | Child's wellness insights             |
+| `/counselor`          | CounselorDashboard   | Roster, sessions, notes, risk queue   |
+| `/school`             | SchoolAdminDashboard | School-wide anonymized analytics      |
+| `/book-counselor`     | BookCounselor        | Time-first booking (students+parents) |
+
+**Platform admin** (`/admin/*`, nested under `AdminLayout`)
+
+| Path                          | Description                                    |
+|-------------------------------|------------------------------------------------|
+| `/admin`                      | Platform KPIs, unreviewed risk first           |
+| `/admin/schools[/:tenantId]`  | School registration, seats, subscriptions      |
+| `/admin/users`                | Disable / reset password                       |
+| `/admin/counselors[/:id]`     | Register, verify (gates the booking directory) |
+| `/admin/risk[/:riskId]`       | Cross-tenant risk oversight (read-only)        |
+| `/admin/ai`                   | Model routing per feature + prompt activation  |
+| `/admin/playground`           | AI playground                                  |
+| `/admin/audit`                | Audit logs (+ CSV export)                      |
+| `/admin/settings`             | Safety thresholds as validated JSON            |
+
+`*` redirects to `/`.
 
 ---
 
@@ -131,6 +166,120 @@ npm run build
 ---
 
 ## 📝 Change Log
+
+### September 11, 2026 — Production hardening: observability, revocable sessions, schema drift
+- **Two outright bugs.** `/health/db` returned **200** with an `"unhealthy"` body when
+  the database was unreachable, so Docker's `HEALTHCHECK`, Render and any load balancer
+  read it as passing and kept routing traffic to an instance that could not answer a
+  single request. It also returned `str(exception)`, which for a connection failure
+  contains the DSN. Now **503**, naming no driver, host or credential. And there were
+  **no exception handlers at all** — FastAPI's default re-raises, which under `DEBUG=true`
+  renders a traceback (file paths, library versions, sometimes query values) straight to
+  the browser. Unexpected errors now return a generic message plus a request id, and are
+  logged in full.
+- **Revocable sessions** (migration 017, `backend/app/auth/sessions.py`). Refresh tokens
+  were stateless JWTs, so logout deleted the client's copy and **nothing else** — a token
+  captured beforehand kept minting sessions for the full seven days. On the shared school
+  machines this product is used from, that is the whole threat. A refresh token now names
+  a row in `refresh_sessions`: refreshing rotates it, logout revokes the family, and
+  presenting an already-spent token revokes the **entire lineage** (a copy is in
+  circulation; ending both halves beats silently continuing). Every refusal returns the
+  same message, so a stolen token learns nothing about which kind it is. Access tokens
+  stay stateless and short-lived — checking them per request would buy minutes at the
+  cost of a query on every call.
+- **Schema drift fixed** (same migration): `alembic check` failed for three separate
+  reasons — migration 016 created `updated_at` on two counselor tables while the models
+  used `TimestampMixin` (which declares only `created_at`, so `FullTimestampMixin` was
+  introduced rather than dropping the columns); four indexes existed in the DB and in no
+  model, so autogenerate proposed **deleting** them; and ~40 columns were `NOT NULL` in
+  models but nullable in the DB, dating to migration 001, so `create_all` (what the tests
+  use) and the migration chain produced different schemas. **CI now runs `alembic check`**,
+  because a suite that builds its schema with `create_all` structurally cannot catch this.
+- **Observability**: request ids (generated per request, echoed in the response, in every
+  log line; a client-supplied id is accepted only if it is a short opaque token), plus
+  Sentry on both sides — `backend/app/observability.py` and `src/lib/monitoring.ts`.
+  **Absent DSN = disabled**, so development and CI never reach a production project.
+  What is sent is deliberately narrow: this frontend renders counseling conversations,
+  wellness scores and children's names, and an error report is not the place for any of it.
+- **Frontend `ErrorBoundary`** mounted outermost in `App.tsx` — outside the router *and*
+  the auth provider, so a crash in either still renders a fallback rather than a white screen.
+- **Production config guards**: `ALLOWED_HOSTS`, `FORCE_HTTPS` (off by default — a container
+  behind a TLS-terminating proxy sees `http://` internally and would redirect forever), and
+  a CSP whose API origin is substituted at container start by
+  `deploy/docker-entrypoint-frontend.sh`, which **refuses to boot without `API_ORIGIN`**:
+  a CSP missing it blocks every call in the browser before it is sent, so server logs stay
+  empty and the page simply does nothing. See `docs/production-configuration.md`.
+
+### September 10, 2026 — Availability engine: recurring schedules + time-first booking
+- **Counselors no longer hand-create slots** (migration 016, additive — nothing dropped).
+  Every bookable time used to be a row in `counselor_availability`, so a counselor who
+  forgot a week silently disappeared from the booking page. Now recurring weekly
+  schedules (`counselor_schedules`, `counselor_schedule_exceptions`) that concrete slots
+  are **derived** from; nothing is persisted, so a 9–5 week is five rows rather than
+  thousands. `counselor_availability` is left in place and populated — **deprecated, not
+  dropped**: those rows explain how existing bookings came to exist.
+- **The database is now the authority on whether a time is free.**
+  `counselor_sessions.ends_at` is the load-bearing addition — with only `scheduled_at`,
+  "does 10:00–10:45 clash with 10:30–11:00?" could not be asked. An **EXCLUDE constraint**
+  over `tstzrange(scheduled_at, ends_at)` makes overlapping live sessions impossible,
+  enforced by Postgres rather than by whoever remembers to check; cancelled and no-show
+  rows sit outside it so they stop consuming time. Where a host forbids `btree_gist` the
+  migration logs loudly and falls back to an index, and the service can **report which
+  mode it is in** rather than being quietly weaker than the box it was tested on.
+- **Timezones**: a schedule's "09:00" is a claim about the counselor's morning, not a UTC
+  instant, so recurring times are stored naive and interpreted in the counselor's IANA
+  zone; everything downstream is UTC and the server's own timezone is never consulted.
+  `tzdata` is now a declared dependency — `zoneinfo` carries no data of its own and
+  Windows has no system database. Overnight schedules stay one row (`end_time <=
+  start_time` runs past midnight).
+- **Slot grid anchored to working hours, not to what bookings leave behind.** Found by
+  opening the page: a counselor working 09:00–17:00 in 30-minute sessions was offering
+  12:15, 12:45, 1:15. The generator subtracted booked time *first* and then walked each
+  surviving interval from its own beginning, so one off-grid session re-anchored the whole
+  rest of the day — the times a student was offered depended on who else had booked.
+  Candidates are now generated on the **fixed** grid and then rejected if they intersect a
+  booking plus its buffer (touching is fine, intersecting is not — same semantics as the
+  DB constraint). Slightly fewer slots in exchange for predictability, which is the right
+  trade for a page whose whole job is telling someone when they can be seen.
+- **Booking is time-first** (`BookCounselor.tsx`). Was counselor-first: pick a person,
+  then hope they had made a slot. Someone who needs to talk on Thursday evening has a
+  *time* in mind, not a counselor — so the flow is date → time window → whoever is free,
+  with "Any counselor" as the default rather than an option. **One component serves both
+  students and parents** (the backend runs a single booking path, so forking the UI would
+  give the same bug two places to live); parents get one extra step, which child, and the
+  child id is verified server-side. A 409 refreshes availability and keeps the "just
+  booked" banner up — the first version cleared it inside the refresh the 409 itself
+  triggered, so the slot vanished with no explanation.
+- **`CounselorAvailability.tsx` is now a weekly grid**: state the hours you work each
+  weekday and Kio derives the slots. Multiple intervals per day, intervals disabled
+  without being deleted, session settings (duration, buffer, timezone) and dated
+  exceptions on the same screen — in the counselor's head they are one question.
+  Timezone is an explicit choice, never inferred.
+- New endpoints: `GET /counselors/availability/search`, `POST|GET|PUT|DELETE
+  /counselors/schedules`, `.../exceptions`, `GET|PUT /counselors/settings`,
+  `POST /counselors/sessions/{id}/cancel`. New client `src/lib/availability-api.ts`.
+
+### September 9, 2026 — Logging that reaches a handler; the CORS trap behind "unable to connect"
+- **App logs were being discarded.** Nothing configured the root logger and uvicorn
+  configures only its own, so every `logger.*` call under `app/` propagated to a
+  handler-less root and vanished. Two mattered: `auth/service.py` logs the
+  email-verification link specifically so local development works with
+  `EMAIL_PROVIDER=noop` (it never appeared, so verifying an email locally was impossible),
+  and `email/service.py` logs delivery failures inside `try_send`, which deliberately
+  never raises — **a production Resend outage was therefore completely silent**. `main.py`
+  now configures the root logger and defers to an existing handler so pytest and gunicorn
+  keep their own setup. pytest installing its own handler is exactly why the suite never
+  caught this.
+- **CORS**: the dev allowlist held only 5173/3000. Vite takes the next free port when its
+  default is busy and binds IPv6 on some Windows setups, so a normal local session can
+  present an origin of `localhost:5174` or `[::1]:5173`. Each drew a 400 on the preflight,
+  the browser blocked the request, and axios surfaced `ERR_NETWORK` — which the login form
+  rendered as "Unable to connect to server", sending you to restart a server that was
+  running and answering. The allowlist now covers 3000/5173/5174/5175 across the
+  `localhost`, `127.0.0.1` and `[::1]` forms (all loopback-only; production still
+  overrides `CORS_ORIGINS` wholesale via env). Since a blocked preflight and an
+  unreachable server are genuinely indistinguishable from JavaScript, `LoginSignup` now
+  names **both** possibilities, the API URL it called, and the page origin.
 
 ### September 8, 2026 — Crisis alerts reach humans, Admin completed, consent layer
 - **The crisis path now reaches a human.** `crisis.py` had been fanning out
@@ -438,22 +587,27 @@ npm run build
 - **Documentation:** Swagger UI, ReDoc, markdown API reference
 
 ### Current State
-- Phase 1 (Auth + Student Dashboard + Chat) -- COMPLETE
-- Phase 2 (Phone Collection + Parent Linking) -- COMPLETE
-- Phase 3 (Comrade AI with Gemini 2.5 Flash) -- COMPLETE
-- Frontend design pages exported and runnable
-- 8 pages/routes implemented (including /student/family)
-- FastAPI backend with 13 modules (including AI)
-- PostgreSQL schema (27+ tables) + SQLAlchemy models
-- JWT authentication + RBAC + multi-tenancy
-- Gemini 2.5 Flash integration via google-genai SDK
-- Comrade system prompt with safety/privacy/injection resistance
-- AI message metadata (model, prompt_version, response_time_ms)
-- DB-first prompt versioning with code fallback
-- Safety event logging (audit_logs)
-- Parent invite code system (MB-XXXX format, 48h TTL)
-- Counselor + School Admin dashboards (frontend static, backend ready)
-- Analytics module (backend ready)
+
+**Shipped end to end** (backend + UI both real, no mock data):
+- Auth: email/password, Google Sign-In, email verification, password reset,
+  **revocable refresh sessions** (migration 017), RBAC, multi-tenancy
+- Consent layer + age gate (under-13 refused, 13–17 guardian-approved), policy pages
+- Comrade AI chat (Gemini 2.5 Flash) with DB-first prompt versioning, memory hooks,
+  per-student daily budget, safety tripwires
+- Wellness: 12-hour check-in windows, mood calendar, persistent weekly activities,
+  personal insights, weekly AI reports
+- Risk: server-side safety floor, counselor risk queue, verdict capture,
+  crisis notifications (in-app bell + email escalation)
+- Counselors: recurring availability engine, time-first booking, sessions + notes
+- Parent dashboard v4, school analytics with small-cohort suppression
+- Platform admin: all 9 pages, cross-tenant risk oversight, audit logs, AI routing
+- Deployment: Dockerfiles, compose, nginx, `render.yaml`, CI (tests, `alembic check`,
+  typecheck, frontend tests, docker build), Sentry + request ids
+
+**Numbers:** 29 frontend routes · 20 backend modules · 47 tables · 17 migrations ·
+332 backend tests · 42 frontend tests
+
+**Known gaps** — see Next Steps below.
 
 ---
 
@@ -555,14 +709,24 @@ School Code: `RHS2026`
 
 ## Next Steps (Planned)
 
-1. **Counselor Dashboard Integration** -- Connect React to counselor API (students, sessions, notes)
-2. **School Admin Dashboard Integration** -- Connect React to analytics API
-3. **AI Memory System** -- Persistent student context across conversations
-4. **Risk Detection** -- Automated workflows from safety events
-5. **Real-time WebSocket Chat** -- Streaming AI responses
-6. **File Uploads** -- S3/local storage for attachments
-7. **Email Notifications** -- Verification and alerts
-
+1. **Legal review of the policy documents** — `/terms` and `/privacy` are engineering
+   drafts carrying a visible "pending legal review" banner. They describe what the code
+   actually does but are **not launch-sufficient**. Two open questions are recorded in
+   `app/consent/policy.py`: whether DPDP permits Kio's continuous behavioural monitoring
+   of minors at all, and what counts as "verifiable" parental consent per jurisdiction.
+   This blocks a real launch; nothing else on this list does.
+2. **Real-time streaming chat** — responses are currently returned whole. No WebSocket
+   or SSE path exists yet; `conversations/service.py` would need a streaming provider call.
+3. **File uploads** — no `UploadFile` anywhere in the backend. Needs S3/local storage plus
+   a scanning story before students can attach anything.
+4. **Consent backfill** — the age gate covers new signups only. Existing accounts are test
+   data, so no backfill was written; this becomes real work the moment there are real users.
+5. **Retire `counselor_availability`** — deprecated by the availability engine but left
+   populated because those rows explain how existing bookings came to exist. Droppable once
+   no live booking references them.
+6. **`test_phase4.py`** at the backend root is a live-server script, not a unit test: it
+   hits `localhost:8000` at import and breaks a bare `pytest`. CI runs `pytest tests/`, so
+   it is invisible there. Move it under a marker or into `scripts/`.
 
 Before implementing any feature:
 
