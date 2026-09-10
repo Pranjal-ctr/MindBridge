@@ -285,24 +285,37 @@ def slots_from_intervals(
         return []
 
     padded_busy = merge_intervals([(s - buffer, e + buffer) for s, e in busy])
-    free = subtract_intervals(intervals, padded_busy)
 
     slots: list[Slot] = []
-    for interval_start, interval_end in free:
+    for interval_start, interval_end in intervals:
+        # The grid is anchored to the WORKING interval, not to whatever time is
+        # left after existing bookings are removed. Subtracting first and
+        # walking the remainder would re-anchor after every booking: one
+        # session running 10:15-10:45 would shift the rest of the day to
+        # 10:45, 11:15, 11:45 and a student would see different times on
+        # different days for no reason they could observe. A fixed grid means
+        # a booked slot simply disappears and its neighbours stay put.
         cursor = interval_start
         while cursor + duration <= interval_end:
             slot_end = cursor + duration
-            # Clip to the caller's window and refuse anything already past.
             if cursor >= not_before and cursor >= window_start and slot_end <= window_end:
-                slots.append(
-                    Slot(
-                        counselor_id=counselor_id,
-                        counselor_name=counselor_name,
-                        start=cursor,
-                        end=slot_end,
-                        duration_minutes=duration_minutes,
-                    )
+                # Reject a candidate that collides with a booking (plus its
+                # buffer). Interval-overlap semantics, matching the database
+                # constraint: touching is fine, intersecting is not.
+                collides = any(
+                    busy_start < slot_end and busy_end > cursor
+                    for busy_start, busy_end in padded_busy
                 )
+                if not collides:
+                    slots.append(
+                        Slot(
+                            counselor_id=counselor_id,
+                            counselor_name=counselor_name,
+                            start=cursor,
+                            end=slot_end,
+                            duration_minutes=duration_minutes,
+                        )
+                    )
             cursor += stride
     return slots
 

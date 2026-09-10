@@ -229,6 +229,34 @@ def test_a_booked_session_removes_exactly_its_slot():
     assert starts(make_slots(intervals, 30, 0, busy)) == ["09:00", "09:30", "10:30"]
 
 
+def test_an_off_grid_booking_does_not_shift_the_rest_of_the_day():
+    """
+    A session at 10:15-10:45 blocks the 10:00 and 10:30 slots and leaves every
+    other start where it was.
+
+    Found in the running app: the generator used to subtract booked time first
+    and then walk what was left, so one off-grid session re-anchored the whole
+    afternoon to 10:45, 11:15, 11:45. Students saw different times on different
+    days with nothing on screen to explain why.
+    """
+    intervals = [(local(MONDAY, 9), local(MONDAY, 12))]
+    busy = [(local(MONDAY, 10, 15), local(MONDAY, 10, 45))]
+    assert starts(make_slots(intervals, 30, 0, busy)) == [
+        "09:00",
+        "09:30",
+        "11:00",
+        "11:30",
+    ]
+
+
+def test_the_grid_is_identical_whether_or_not_anything_is_booked():
+    intervals = [(local(MONDAY, 9), local(MONDAY, 12))]
+    free = starts(make_slots(intervals, 30, 0, []))
+    busy = [(local(MONDAY, 10, 7), local(MONDAY, 10, 23))]
+    with_booking = starts(make_slots(intervals, 30, 0, busy))
+    assert set(with_booking).issubset(set(free))
+
+
 def test_buffer_protects_the_time_around_a_booking():
     """A 10-minute buffer means the slots either side of a booking go too."""
     intervals = [(local(MONDAY, 9), local(MONDAY, 12))]
