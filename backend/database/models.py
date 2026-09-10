@@ -403,6 +403,11 @@ class ParentInviteCode(Base, TimestampMixin):
             "ix_invite_student_active", "student_id",
             postgresql_where=text("NOT is_used"),
         ),
+        # Migration 003 created this as a plain index named ix_invite_code
+        # while the column below also declares unique=True. Declaring the
+        # deployed name here stops autogenerate proposing a drop-and-recreate
+        # of an index that redeeming a code depends on.
+        Index("ix_invite_code", "code"),
     )
 
     code_id: Mapped[uuid.UUID] = mapped_column(
@@ -411,7 +416,11 @@ class ParentInviteCode(Base, TimestampMixin):
     student_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("student_profiles.student_id", ondelete="CASCADE")
     )
-    code: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    # unique=True gives the deployed UNIQUE constraint; the lookup index is
+    # declared in __table_args__ under the name migration 003 actually created
+    # (ix_invite_code). index=True here would additionally demand a *second*,
+    # differently named unique index that no database has.
+    code: Mapped[str] = mapped_column(String(10), unique=True)
     is_used: Mapped[bool] = mapped_column(Boolean, default=False)
     used_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent_profiles.parent_id", ondelete="SET NULL"),
@@ -601,6 +610,11 @@ class RiskAssessment(Base, TimestampMixin):
             "review_status",
             postgresql_where=text("review_status = 'pending'"),
         ),
+        # From migrations 013 and 014. Undeclared, so autogenerate wanted to
+        # drop both: the first backs a counselor's own review queue, the
+        # second the AI-versus-human verdict reporting.
+        Index("ix_risk_assessments_assigned", "assigned_counselor_id"),
+        Index("ix_risk_assessments_verdict", "verdict"),
     )
 
     risk_id: Mapped[uuid.UUID] = mapped_column(
@@ -1005,7 +1019,55 @@ class CounselorAvailability(Base, TimestampMixin):
     counselor: Mapped[CounselorProfile] = relationship(back_populates="availability")
 
 
-class CounselorSchedule(Base, TimestampMixin):
+class RefreshSession(Base):
+    """
+    A server-side record of one issued refresh token.
+
+    Refresh tokens were previously stateless JWTs, which made logout a purely
+    cosmetic act: the client deleted its copy and the token kept working until
+    it expired. On a shared school laptop that is the whole threat -- the next
+    person, or anyone who copied the token, could keep minting sessions for
+    days.
+
+    The refresh token now carries this row's id. Refreshing rotates: the old
+    row is revoked and a successor is issued in the same family. A token that
+    is presented after being revoked is a replay, and the entire family is
+    revoked in response -- either the token was stolen, or the legitimate user
+    is racing themselves, and both are better ended than silently continued.
+
+    Access tokens stay stateless and short-lived. Checking them against the
+    database on every request would put a query in front of every single call
+    to buy at most a few minutes of earlier cut-off.
+    """
+
+    __tablename__ = "refresh_sessions"
+    __table_args__ = (
+        Index("ix_refresh_sessions_user", "user_id"),
+        Index("ix_refresh_sessions_family", "family_id"),
+    )
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    # Every rotation of one original login shares a family id, so a replay can
+    # take down that lineage without touching the user's other devices.
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    revoked_reason: Mapped[Optional[str]] = mapped_column(String(40))
+    # Coarse device context so a person can recognise their own sessions. No
+    # precise location, and never anything about what the session was used for.
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255))
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45))
+
+
+class CounselorSchedule(Base, FullTimestampMixin):
     """
     One recurring weekly working interval for a counselor.
 
@@ -1062,7 +1124,7 @@ class CounselorSchedule(Base, TimestampMixin):
     counselor: Mapped[CounselorProfile] = relationship(back_populates="schedules")
 
 
-class CounselorScheduleException(Base, TimestampMixin):
+class CounselorScheduleException(Base, FullTimestampMixin):
     """
     A dated override of the recurring schedule.
 
@@ -1266,6 +1328,10 @@ class AuditLog(Base, TimestampMixin):
     __tablename__ = "audit_logs"
     __table_args__ = (
         Index("ix_audit_user_action", "user_id", "action"),
+        # Created by migration 013 and never declared here, so autogenerate
+        # proposed dropping it on every run. It backs the admin audit log's
+        # default ordering, which is by recency over the whole table.
+        Index("ix_audit_logs_created_at", "created_at"),
     )
 
     audit_id: Mapped[uuid.UUID] = mapped_column(

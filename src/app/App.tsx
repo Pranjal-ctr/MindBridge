@@ -31,11 +31,15 @@ import { RiskDetailPage } from './components/admin/pages/RiskDetailPage';
 import { AIControlPage } from './components/admin/pages/AIControlPage';
 import { AuditLogsPage } from './components/admin/pages/AuditLogsPage';
 import { SettingsPage } from './components/admin/pages/SettingsPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
+    // Outermost, so a crash in the router, the auth provider, or any page
+    // still renders a fallback rather than a white screen.
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
         <Routes>
           {/* Public routes */}
           <Route path="/" element={<LandingPage />} />
@@ -154,7 +158,8 @@ export default function App() {
           {/* Catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

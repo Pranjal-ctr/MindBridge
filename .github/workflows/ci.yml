@@ -80,6 +80,13 @@ jobs:
           heads=$(alembic heads | grep -c '(head)' || true)
           echo "head revisions: $heads"
           test "$heads" -eq 1
+      - name: Verify models match the migrated schema
+        working-directory: backend
+        # `alembic check` fails when models.py has drifted from what the
+        # migration chain produces. The test suite builds its schema with
+        # create_all and so cannot notice: a column added to a model but never
+        # migrated passes every test and is missing in production.
+        run: alembic check
 
   frontend-build:
     runs-on: ubuntu-latest

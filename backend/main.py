@@ -5,10 +5,22 @@ Kio API — FastAPI Application Entry Point
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
+from app.observability import (
+    REQUEST_ID_HEADER,
+    RequestContextMiddleware,
+    RequestIdFilter,
+    SecurityHeadersMiddleware,
+    get_request_id,
+    init_sentry,
+)
 from database.session import engine
 
 
@@ -35,11 +47,26 @@ def _configure_logging() -> None:
         return
     logging.basicConfig(
         level=logging.DEBUG if settings.DEBUG else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        # The request id makes a production report ("it failed, reference
+        # ab12cd") resolvable to the exact line without guesswork.
+        format="%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s",
     )
+    # The filter must sit on the handlers: records reaching the root logger
+    # come from every module, and a formatter referencing %(request_id)s would
+    # raise on any record that lacks the attribute.
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RequestIdFilter())
+
+    # httpx logs every outbound request at INFO, full URL included. Kio calls
+    # Resend and Google from the server, and a URL is exactly the place a
+    # one-time token would sit. Warnings and errors still come through.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 _configure_logging()
+
+logger = logging.getLogger("kio")
 
 
 # Lifespan: startup/shutdown events
@@ -55,9 +82,13 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    # Interactive docs enumerate every endpoint, parameter and schema in the
+    # product. That is a convenience in development and a map for an attacker
+    # in production, so the schema is not served there at all -- None removes
+    # the route rather than hiding the link to it.
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
     lifespan=lifespan,
     openapi_tags=[
         {"name": "🔐 Auth", "description": "Authentication & token management"},
@@ -79,14 +110,98 @@ app = FastAPI(
     ],
 )
 
-# CORS Middleware
+# Middleware. Starlette runs these bottom-up, so the request-id layer is added
+# last and therefore runs first -- every log line and error response below it
+# already has an id to quote.
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS. The origin list is explicit in every environment; config.py refuses a
+# wildcard outright (credentials are sent) and refuses loopback origins in
+# production. Expose the request id so a browser client can read it back and
+# show a reference when something fails.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[REQUEST_ID_HEADER],
 )
+
+if settings.ALLOWED_HOSTS:
+    # Blocks Host-header spoofing, which otherwise turns any absolute URL the
+    # app builds -- password-reset links above all -- into an attacker's domain.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
+
+if settings.FORCE_HTTPS:
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+app.add_middleware(RequestContextMiddleware)
+
+_SENTRY_ENABLED = init_sentry()
+
+
+# -------------------------------------------------------------------
+# Exception handling
+#
+# Three rules: an expected error keeps its status and message, an unexpected
+# one never reaches the client as a stack trace, and nothing is swallowed.
+# -------------------------------------------------------------------
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Deliberate errors (404, 403, 409...) pass through with their own detail."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "request_id": get_request_id()},
+        headers={REQUEST_ID_HEADER: get_request_id()},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Malformed input. Returned as-is minus the offending values.
+
+    Pydantic includes the rejected input in each error, which for this app can
+    be a password or a message to Comrade; the field path and reason are what
+    a caller needs to fix the request.
+    """
+    errors = [
+        {"loc": error.get("loc"), "msg": error.get("msg"), "type": error.get("type")}
+        for error in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": errors, "request_id": get_request_id()},
+        headers={REQUEST_ID_HEADER: get_request_id()},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Anything unforeseen: log it in full, tell the client almost nothing.
+
+    Without this FastAPI re-raises, and with DEBUG=true a traceback -- file
+    paths, library versions, sometimes query values -- is rendered straight to
+    the browser. The client gets a request id instead, which is the one piece
+    of internal state that is safe to share and the only one that helps.
+    """
+    logger.exception(
+        "Unhandled exception method=%s path=%s", request.method, request.url.path
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "Something went wrong. Please try again.",
+            "request_id": get_request_id(),
+        },
+        headers={REQUEST_ID_HEADER: get_request_id()},
+    )
 
 # Import and register routers
 from app.auth.router import router as auth_router  # noqa: E402
@@ -134,7 +249,18 @@ async def health_check():
 
 @app.get("/health/db", tags=["🏥 Health"])
 async def db_health_check():
-    """Database connectivity check."""
+    """
+    Database connectivity check.
+
+    Returns 503 when the database is unreachable. It previously returned 200
+    with an "unhealthy" body, which meant every orchestrator -- Docker's
+    HEALTHCHECK, Render, a load balancer -- read it as passing and kept
+    routing traffic to an instance that could not serve a single request.
+
+    The failure body names no driver, host, or credential: the exception text
+    from a connection failure routinely contains the DSN. Operators get the
+    detail from the logs, which are not public.
+    """
     from sqlalchemy import text
     from database.session import async_session_factory
 
@@ -142,5 +268,9 @@ async def db_health_check():
         async with async_session_factory() as session:
             await session.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "connected"}
-    except Exception as e:
-        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
+    except Exception:
+        logger.exception("Database health check failed")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "database": "disconnected"},
+        )

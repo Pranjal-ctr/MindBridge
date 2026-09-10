@@ -44,11 +44,18 @@ RUN npx tsc --noEmit && npm run build
 FROM nginx:1.27-alpine AS runtime
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY deploy/docker-entrypoint-frontend.sh /docker-entrypoint-frontend.sh
 COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Normalise line endings and set the executable bit here rather than relying on
+# the checkout: a clone on Windows can produce CRLF, and `#!/bin/sh` fails
+# with a bare "not found" that names neither the file nor the reason.
+RUN sed -i 's/$//' /docker-entrypoint-frontend.sh && chmod +x /docker-entrypoint-frontend.sh
 
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD wget --quiet --tries=1 --spider http://localhost/healthz || exit 1
 
+ENTRYPOINT ["/docker-entrypoint-frontend.sh"]
 CMD ["nginx", "-g", "daemon off;"]

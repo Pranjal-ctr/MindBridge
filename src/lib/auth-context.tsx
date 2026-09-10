@@ -12,7 +12,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import api, { clearTokens, getAccessToken, setTokens } from './api';
+import api, { getRefreshToken, clearTokens, getAccessToken, setTokens } from './api';
 import type {
   AuthResponse,
   GoogleAuthResponse,
@@ -39,7 +39,8 @@ interface AuthContextValue extends AuthState {
   completeGoogleSignup: (payload: GoogleCompleteRequest) => Promise<UserResponse>;
   /** Re-fetch /auth/me. Used after out-of-band changes such as email verification. */
   refreshUser: () => Promise<UserResponse | null>;
-  logout: () => void;
+  /** Revokes the refresh session server-side, then clears local credentials. */
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -118,7 +119,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // Tell the server first so the refresh session is actually revoked.
+    // Clearing localStorage alone only removes this browser's copy: before
+    // refresh sessions existed, a token captured from a shared school machine
+    // kept minting new sessions for days after the student "logged out".
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      try {
+        await api.post('/auth/logout', { refresh_token: refreshToken });
+      } catch {
+        // Best effort. A network failure must not trap someone in a session
+        // they have asked to leave, and the local credentials still go.
+      }
+    }
     clearTokens();
     setUser(null);
   }, []);

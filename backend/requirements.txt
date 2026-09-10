@@ -46,3 +46,9 @@ google-auth==2.55.0
 # frequently omit it, so zoneinfo falls back to this package. Without it
 # ZoneInfo() raises and every counselor's availability is unresolvable.
 tzdata==2025.2
+
+# --- Error reporting -------------------------------------------------
+# Enabled only when SENTRY_DSN is set, so development and CI cannot report
+# into a production project by forgetting a flag. app/observability.py scrubs
+# request bodies, tokens and user identifiers before anything is sent.
+sentry-sdk[fastapi]==2.20.0

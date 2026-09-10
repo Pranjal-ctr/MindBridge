@@ -136,12 +136,73 @@ class Settings(BaseSettings):
                 return "postgresql+asyncpg://" + v[len(prefix):]
         return v
 
+    # -------------------------------------------------------------------
+    # Observability (Sentry). Absent DSN = disabled, which is the correct
+    # default for development and CI: neither should reach a production
+    # project, and an unset DSN is a far safer switch than a boolean someone
+    # has to remember to flip.
+    # -------------------------------------------------------------------
+    SENTRY_DSN: str = ""
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    SENTRY_ENVIRONMENT: str = ""
+
+    # Hosts the API will answer for. Empty means "any", which is right for
+    # development and wrong for production; the validator below enforces that.
+    ALLOWED_HOSTS: list[str] = []
+
+    # Terminate plain HTTP in production. Off by default because a container
+    # behind a TLS-terminating proxy sees http:// internally and would redirect
+    # forever; turn it on only when the app is genuinely edge-facing.
+    FORCE_HTTPS: bool = False
+
+    @property
+    def is_production(self) -> bool:
+        """
+        One definition of production, used by every environment-aware branch.
+
+        Comparing ENVIRONMENT strings in a dozen places is how one of them ends
+        up checking != "development" and quietly enabling docs on staging.
+        """
+        return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def is_testing(self) -> bool:
+        return self.ENVIRONMENT.lower() in ("test", "testing")
+
+    @property
+    def sentry_enabled(self) -> bool:
+        return bool(self.SENTRY_DSN.strip())
+
     @model_validator(mode="after")
     def _forbid_dev_secret_in_production(self) -> "Settings":
         if self.ENVIRONMENT.lower() == "production" and self.JWT_SECRET_KEY == _DEV_JWT_SECRET:
             raise ValueError(
                 "JWT_SECRET_KEY must be set to a strong secret in production. "
                 "Refusing to start with the development default."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _forbid_wildcard_cors_with_credentials(self) -> "Settings":
+        """
+        A wildcard origin plus credentials is not a configuration, it is a hole.
+
+        Browsers refuse the combination outright, so allowing it here would
+        only produce an app that fails in a confusing way while advertising
+        that any site may call the API.
+        """
+        if "*" in self.CORS_ORIGINS:
+            raise ValueError(
+                "CORS_ORIGINS must not contain '*': Kio sends credentials, and "
+                "a wildcard origin with credentials is rejected by browsers."
+            )
+        if self.is_production and any(
+            origin.startswith(("http://localhost", "http://127.0.0.1", "http://[::1]"))
+            for origin in self.CORS_ORIGINS
+        ):
+            raise ValueError(
+                "CORS_ORIGINS still contains a loopback origin in production. "
+                "Set it to the real frontend origin(s)."
             )
         return self
 

@@ -29,6 +29,24 @@ def _normalize_phone(value: str) -> str:
 
 # Requests -----------------------------------------------------------
 
+class LogoutRequest(BaseModel):
+    """
+    Revoke a refresh session.
+
+    The refresh token identifies which session to end, so a caller can only
+    log out a session it already holds credentials for.
+    """
+
+    refresh_token: str
+    all_devices: bool = Field(
+        False,
+        description=(
+            "Revoke every session for this user, not just this one. For a "
+            "student who signed in on a shared school machine."
+        ),
+    )
+
+
 class SignupRequest(BaseModel):
     """New user registration payload."""
     email: EmailStr

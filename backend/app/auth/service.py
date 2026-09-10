@@ -23,6 +23,14 @@ from app.auth.utils import (
     hash_password,
     verify_password,
 )
+from app.auth.sessions import (
+    REASON_LOGOUT,
+    REASON_LOGOUT_ALL,
+    consume_session,
+    create_session,
+    revoke_all_for_user,
+    revoke_family,
+)
 from app.config import settings
 from app.consent.service import (
     enforce_age_gate,
@@ -123,7 +131,7 @@ async def register_user(
     await dispatch_verification_email(user, background_tasks)
 
     # 9. Generate tokens
-    tokens = _generate_tokens(user)
+    tokens = await _generate_tokens(db, user, request=request)
 
     return user, tokens
 
@@ -310,7 +318,12 @@ async def _auto_redeem_invite(db: AsyncSession, user: User, invite_code: str) ->
         pass
 
 
-async def authenticate_user(db: AsyncSession, email: str, password: str) -> tuple[User, TokenResponse]:
+async def authenticate_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    request: Request | None = None,
+) -> tuple[User, TokenResponse]:
     """
     Authenticate user with email/password.
 
@@ -341,7 +354,7 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> tupl
     user.last_login = datetime.now(timezone.utc)
     await db.flush()
 
-    tokens = _generate_tokens(user)
+    tokens = await _generate_tokens(db, user, request=request)
     return user, tokens
 
 
@@ -384,7 +397,7 @@ async def google_authenticate(db: AsyncSession, google_id_token: str):
         await _ensure_tenant_not_suspended(db, user)
         user.last_login = datetime.now(timezone.utc)
         await db.flush()
-        tokens = _generate_tokens(user)
+        tokens = await _generate_tokens(db, user)
         return GoogleAuthResponse(
             status="authenticated",
             tokens=tokens,
@@ -500,7 +513,7 @@ async def google_complete_registration(
 
     await record_signup_consent(db, user.user_id, request=request)
 
-    tokens = _generate_tokens(user)
+    tokens = await _generate_tokens(db, user, request=request)
     return user, tokens
 
 
@@ -519,6 +532,10 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenRes
             )
 
         user_id = uuid.UUID(payload["sub"])
+        # Tokens issued before refresh sessions existed carry no sid. They are
+        # refused rather than honoured: accepting them would leave a window in
+        # which the un-revocable tokens this change exists to kill still work.
+        session_id = uuid.UUID(payload["sid"])
     except (JWTError, KeyError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -536,7 +553,51 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenRes
 
     await _ensure_tenant_not_suspended(db, user)
 
-    return _generate_tokens(user)
+    # Spend the presented session and issue its successor in the same family.
+    # consume_session raises if it is unknown, expired, or already spent -- and
+    # in the last case revokes the whole family, because a spent token being
+    # presented again means a copy of it is in circulation.
+    session = await consume_session(db, session_id)
+    if session.user_id != user.user_id:
+        # The token's subject and its session disagree: a forged or tampered
+        # payload. Nothing about this is recoverable.
+        await revoke_family(db, session.family_id, "mismatch")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    return await _generate_tokens(db, user, family_id=session.family_id)
+
+
+async def logout(
+    db: AsyncSession, refresh_token: str, *, all_devices: bool = False
+) -> dict[str, str]:
+    """
+    Revoke the session behind a refresh token.
+
+    Deliberately forgiving: an unreadable or already-dead token still returns
+    success. Logout is the one action that must never appear to fail -- a
+    student on a shared machine who sees "logout failed" has no next move, and
+    the desired end state (that token being useless) already holds.
+    """
+    from jose import JWTError
+
+    try:
+        payload = decode_token(refresh_token)
+        if payload.get("type") != "refresh":
+            return {"status": "logged_out"}
+        family_id = uuid.UUID(payload["fam"])
+        user_id = uuid.UUID(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        return {"status": "logged_out"}
+
+    if all_devices:
+        await revoke_all_for_user(db, user_id, REASON_LOGOUT_ALL)
+    else:
+        await revoke_family(db, family_id, REASON_LOGOUT)
+    return {"status": "logged_out"}
+
 
 
 # -------------------------------------------------------------------
@@ -638,16 +699,32 @@ async def _create_role_profile(db: AsyncSession, user: User) -> None:
     await db.flush()
 
 
-def _generate_tokens(user: User) -> TokenResponse:
-    """Create access + refresh token pair for a user."""
+async def _generate_tokens(
+    db: AsyncSession,
+    user: User,
+    *,
+    family_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> TokenResponse:
+    """
+    Create an access + refresh pair, recording the refresh side server-side.
+
+    The refresh token carries the session row's id (`sid`) and its family, so
+    it can be revoked. The access token is unchanged: still stateless, still
+    short-lived, still carrying only sub/tenant/role.
+    """
     token_data = {
         "sub": str(user.user_id),
         "tenant_id": str(user.tenant_id),
         "role": user.role,
     }
 
+    session = await create_session(db, user.user_id, family_id=family_id, request=request)
+
     access_token = create_access_token(token_data)
-    refresh_token = create_refresh_token(token_data)
+    refresh_token = create_refresh_token(
+        {**token_data, "sid": str(session.session_id), "fam": str(session.family_id)}
+    )
 
     return TokenResponse(
         access_token=access_token,

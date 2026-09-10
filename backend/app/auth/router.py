@@ -17,6 +17,7 @@ from app.auth.schemas import (
     GoogleAuthResponse,
     GoogleCompleteRequest,
     LoginRequest,
+    LogoutRequest,
     RefreshTokenRequest,
     ResetPasswordRequest,
     SignupRequest,
@@ -28,6 +29,7 @@ from app.auth.service import (
     authenticate_user,
     google_authenticate,
     google_complete_registration,
+    logout,
     refresh_access_token,
     register_user,
     request_password_reset,
@@ -78,6 +80,7 @@ async def signup(
 )
 async def login(
     payload: LoginRequest,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -85,7 +88,7 @@ async def login(
 
     Returns JWT access & refresh tokens with user profile.
     """
-    user, tokens = await authenticate_user(db, payload.email, payload.password)
+    user, tokens = await authenticate_user(db, payload.email, payload.password, request)
     return AuthResponse(
         tokens=tokens,
         user=UserResponse.model_validate(user),
@@ -134,15 +137,40 @@ async def google_complete(
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit("refresh", 30))],
+)
 async def refresh_token(
     payload: RefreshTokenRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Refresh an expired access token using a valid refresh token.
+    Exchange a refresh token for a new pair.
+
+    Rotates: the presented token is spent and a successor issued. Presenting
+    a spent token revokes every session descended from that login, on the
+    assumption that a copy is in circulation.
     """
     return await refresh_access_token(db, payload.refresh_token)
+
+
+@router.post("/logout")
+async def logout_endpoint(
+    payload: LogoutRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Revoke the refresh session so the token cannot mint any more.
+
+    Unauthenticated on purpose. The refresh token is the credential, and
+    requiring a live access token would mean a session whose access token had
+    already expired could not be revoked -- exactly the session most worth
+    revoking. Always reports success: a student on a shared machine who is
+    told "logout failed" has no next move.
+    """
+    return await logout(db, payload.refresh_token, all_devices=payload.all_devices)
 
 
 @router.post("/verify", dependencies=[Depends(rate_limit("verify", 20))])

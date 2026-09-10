@@ -8,6 +8,8 @@ Usage:
 """
 
 import asyncio
+import os
+import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -321,5 +323,51 @@ async def seed():
         print(f"   Platform Admin: admin@mindbridge.ai")
 
 
+class SeedRefused(RuntimeError):
+    """Raised when seeding is attempted against a production environment."""
+
+
+def assert_seeding_allowed(force: bool = False) -> None:
+    """
+    Refuse to seed production.
+
+    This data is not merely untidy in production, it is a breach: five accounts
+    across every role -- including platform admin -- sharing one password that
+    is printed in this file, in the README, and in the git history. Creating
+    them on a live system hands anyone who has read the repository an admin
+    login.
+
+    The guard lives here rather than only in docker-entrypoint.sh because
+    `python -m database.seed` is the obvious thing to type and bypasses the
+    shell script entirely.
+
+    KIO_ALLOW_PRODUCTION_SEED=i-understand exists for the one legitimate case:
+    a staging stack deliberately labelled production. It is intentionally
+    awkward to type and is logged.
+    """
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    if environment != "production":
+        return
+
+    override = os.getenv("KIO_ALLOW_PRODUCTION_SEED", "")
+    if force or override == "i-understand":
+        print(
+            "[WARN] Seeding a production environment because an explicit "
+            "override was set. Demo accounts share one published password."
+        )
+        return
+
+    raise SeedRefused(
+        "REFUSING to seed: ENVIRONMENT=production. This creates demo accounts "
+        "for every role that share one published password. If this really is a "
+        "throwaway staging stack, set KIO_ALLOW_PRODUCTION_SEED=i-understand."
+    )
+
+
 if __name__ == "__main__":
+    try:
+        assert_seeding_allowed()
+    except SeedRefused as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        raise SystemExit(1)
     asyncio.run(seed())

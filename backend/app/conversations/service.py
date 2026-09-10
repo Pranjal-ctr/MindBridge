@@ -9,6 +9,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from app.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
@@ -346,13 +348,33 @@ async def run_post_response_hooks(
             )
 
             await db.commit()
-    except Exception as e:
-        logger.warning("Post-response hooks failed (non-fatal): %s", str(e))
+    except Exception as exc:
+        # Non-fatal for the student -- they already have their reply -- but
+        # logged with a traceback and reported, because "titles stopped being
+        # generated" is otherwise invisible until somebody notices by eye.
+        logger.exception("Post-response hooks failed (non-fatal)")
+        report_exception(exc, stage="post_response_hooks", conversation_id=conversation_id)
 
     # Intelligence pipeline (own session, each step individually non-fatal)
     try:
         await run_intelligence_pipeline(
             conversation_id, student_id, student_user_id, student_message_id
         )
-    except Exception as e:
-        logger.warning("Intelligence pipeline failed (non-fatal): %s", str(e))
+    except Exception as exc:
+        # This one carries risk detection and the crisis workflow, so it is an
+        # ERROR rather than a warning: a student can be quietly missed by the
+        # escalation path while every request still returns 200. The
+        # synchronous keyword tripwire in send_ai_response runs before this and
+        # is unaffected -- acute language still alerts even if this never runs.
+        logger.exception(
+            "Intelligence pipeline failed -- risk analysis did not complete for "
+            "student_id=%s conversation_id=%s",
+            student_id,
+            conversation_id,
+        )
+        report_exception(
+            exc,
+            stage="intelligence_pipeline",
+            student_id=str(student_id),
+            severity="safety_relevant",
+        )
