@@ -39,6 +39,7 @@ import { useAuth } from '../../../lib/auth-context';
 import { useConversations } from '../../../hooks/useConversations';
 import { useWellnessScore } from '../../../hooks/useWellness';
 import { MOOD_META, formatTime } from '../../../lib/mood';
+import { MoodFace } from './MoodFace';
 import api from '../../../lib/api';
 import type { DailyCheckinStatusResponse } from '../../../lib/types';
 
@@ -284,13 +285,13 @@ export function StudentHome() {
             </span>
             <div className="hidden items-center gap-6 lg:flex">
               <KioMascot size={148} />
-              {/* The reference's handwritten margin note.
-                  Set in Kio's own typeface, italic and tilted, rather than
-                  pulling in a third webfont for one decorative line — brand.md
-                  specifies Poppins and Inter, and a script face would be a
-                  network request on a page students open several times a day. */}
+              {/* The design's handwritten margin note, in the script face
+                  it specifies (Caveat). It ships in the same Google Fonts
+                  request as Inter and Poppins rather than a second one, and it
+                  is decorative only — nothing a student has to read is set in
+                  it, and `aria-hidden` keeps it out of the screen reader. */}
               <p
-                className="max-w-[10rem] -rotate-2 font-heading text-[13px] italic leading-relaxed text-secondary/70"
+                className="max-w-[11rem] -rotate-2 font-handwritten text-xl leading-snug text-secondary/80"
                 aria-hidden="true"
               >
                 You're doing better than you think
@@ -335,10 +336,10 @@ export function StudentHome() {
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
               <div className="flex items-center gap-4">
                 <span
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-2xl shadow-[0_1px_3px_rgb(35_43_109_/_0.07)]"
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white shadow-[0_1px_3px_rgb(35_43_109_/_0.07)]"
                   aria-hidden="true"
                 >
-                  {mood.emoji}
+                  <MoodFace mood={checkin.checkin.mood} size={38} />
                 </span>
                 <div className="min-w-0">
                   <p className="font-heading text-lg font-semibold text-primary">
@@ -531,9 +532,8 @@ export function StudentHome() {
           the last thing on the page rather than another call to action. */}
       <div className="mt-12 flex items-center gap-3">
         <KioMascot size={52} withParticles={false} className="shrink-0" />
-        <p className="text-sm italic text-muted-foreground/80">
-          “Progress, not perfection.”{' '}
-          <span className="not-italic">— Kio</span>
+        <p className="font-handwritten text-xl leading-snug text-muted-foreground">
+          “Progress, not perfection.” — Kio
         </p>
       </div>
 

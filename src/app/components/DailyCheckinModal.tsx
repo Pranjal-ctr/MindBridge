@@ -12,6 +12,7 @@ import { Loader2, Sparkles, X } from 'lucide-react';
 import { KioLogo } from './KioLogo';
 import api from '../../lib/api';
 import { MOOD_META, MOOD_ORDER } from '../../lib/mood';
+import { MoodFace } from './student/MoodFace';
 import type {
   CheckinReason,
   DailyCheckinResponse,
@@ -135,7 +136,7 @@ export function DailyCheckinModal({ onComplete, mode = 'initial', onClose }: Dai
                           : 'border-border hover:border-primary/40 bg-white'
                       }`}
                     >
-                      <span className="text-2xl leading-none">{MOOD_META[value].emoji}</span>
+                      <MoodFace mood={value} size={40} selected={mood === value} />
                       <span className="text-[11px] text-center leading-tight text-muted-foreground">
                         {MOOD_META[value].label}
                       </span>

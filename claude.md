@@ -174,6 +174,36 @@ npm run build
 
 ## 📝 Change Log
 
+### September 16, 2026 — Growth and Journal rebuilt on the Figma reference
+
+- The design in `Rebranding/new page ref` is a **static Figma Make mock** — its
+  own palette, its own fonts, hardcoded arrays. What was taken from it is the
+  layout and the motifs; every number on the shipped pages comes from an
+  endpoint (`/memory/`, `/wellness/journal`, `/wellness/mood-calendar`,
+  `/wellness/score`). Nothing is seeded or estimated, and a section whose fetch
+  fails says so rather than rendering a convincing empty state.
+- **`MoodFace`** (`student/MoodFace.tsx`) replaces the emoji characters
+  wherever a mood is shown — Home, the check-in modal, the mood calendar, and
+  the new journal picker. Emoji are a font: the same check-in rendered as
+  Apple's glossy faces on one phone, Segoe's outlines on a school Windows
+  machine, and tofu on an older Android. For the one control this product asks
+  a teenager to use daily, the scale has to be the same drawing everywhere.
+- **Journal** is now a real page rather than a text box: optional title and
+  mood (stored as the `mood_score` the API already had), writing prompts, a
+  month strip marking the days written on, and stats computed from the entries
+  themselves. The reference's tag chips were **dropped** — there is no column
+  for them, and chips that silently discard what a student picked are worse
+  than no chips.
+- **Growth** keeps the wellness score and the pin/delete controls (the one real
+  say a student has over what the AI remembers) and gains the reference's area
+  cards with live counts, a four-week check-in heatmap derived from the mood
+  calendar, the weighted "current picture", and a reflections timeline.
+- **Caveat** joins the existing Google Fonts request for the handwritten margin
+  notes, exposed as `font-handwritten`. It is declared inside `@theme` — a
+  `--font-*` in bare `:root` generates no Tailwind v4 utility, which is why the
+  older `font-heading` classes in the codebase do nothing.
+- Verified in the browser against the seeded student, not just in tests.
+
 ### September 16, 2026 — Student experience: a Home that isn't a dashboard
 
 - **`/student` was the chat.** Signing in dropped a student back into their

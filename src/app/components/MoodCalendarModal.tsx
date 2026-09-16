@@ -6,7 +6,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import api from '../../lib/api';
-import { MOOD_META, moodEmojiForScore } from '../../lib/mood';
+import { MOOD_META } from '../../lib/mood';
+import { MoodFace, moodForScore } from './student/MoodFace';
 import type { MoodCalendarDay, MoodCalendarResponse } from '../../lib/types';
 
 interface MoodCalendarModalProps {
@@ -51,8 +52,10 @@ export function MoodCalendarModal({ onClose }: MoodCalendarModalProps) {
     return list;
   }, [month, calendar]);
 
-  const emojiFor = (entry: MoodCalendarDay) =>
-    entry.mood ? MOOD_META[entry.mood].emoji : moodEmojiForScore(entry.mood_score);
+  // A day can carry a check-in mood, a score from the lighter one-tap mood
+  // update, or neither.
+  const faceFor = (entry: MoodCalendarDay) =>
+    entry.mood ?? moodForScore(entry.mood_score);
 
   return (
     <div
@@ -109,9 +112,11 @@ export function MoodCalendarModal({ onClose }: MoodCalendarModalProps) {
                       }`}
                     >
                       <span className="text-muted-foreground/70 text-[10px]">{cell.day}</span>
-                      {cell.entry && (
-                        <span className="text-base leading-none">{emojiFor(cell.entry)}</span>
-                      )}
+                      {cell.entry &&
+                        (() => {
+                          const face = faceFor(cell.entry);
+                          return face ? <MoodFace mood={face} size={22} /> : null;
+                        })()}
                     </button>
                   )
                 )}
@@ -121,7 +126,7 @@ export function MoodCalendarModal({ onClose }: MoodCalendarModalProps) {
                 <div className="mt-4 p-4 bg-muted/50 rounded-xl text-sm space-y-1">
                   <div className="font-medium">
                     {new Date(selected.date).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-                    {selected.mood && ` — ${MOOD_META[selected.mood].emoji} ${MOOD_META[selected.mood].label}`}
+                    {selected.mood && ` — ${MOOD_META[selected.mood].label}`}
                   </div>
                   {selected.reason && (
                     <div className="text-muted-foreground capitalize">
