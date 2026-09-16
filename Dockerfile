@@ -25,8 +25,14 @@ COPY . .
 
 ARG VITE_API_BASE_URL
 ARG VITE_GOOGLE_CLIENT_ID=""
+# Declared so the build arg compose passes actually reaches Vite. Without
+# a matching ARG here Docker accepts the value, warns, and drops it: the
+# bundle would ship with no reporting configuration while the compose file
+# looked correct. Empty is a valid value -- it disables reporting.
+ARG VITE_SENTRY_DSN=""
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
-    VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+    VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID \
+    VITE_SENTRY_DSN=$VITE_SENTRY_DSN
 
 # Fail loudly at build time rather than shipping a bundle that silently falls
 # back to http://localhost:8000 and breaks for every real user.

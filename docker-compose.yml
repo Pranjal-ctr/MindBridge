@@ -56,6 +56,11 @@ services:
       DEBUG: ${DEBUG:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:8080"]}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      # Required once ENVIRONMENT=production: the app refuses to start without
+      # it. Compose injects only the keys named here, so a value set in .env
+      # and not listed would silently never reach the container — and the
+      # startup refusal would look like the setting being ignored.
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-[]}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -63,6 +68,10 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-Kio <onboarding@resend.dev>}
       EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-}
+      # Empty disables error reporting; that is the switch, so an unset
+      # value here is a working configuration rather than a missing one.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       # See docker-entrypoint.sh for why this defaults to 1.
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
     ports:
@@ -80,6 +89,9 @@ services:
         # these requires `docker compose build web`, not a restart.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        # Build-time: a bundle built without a DSN contains no reporting
+        # configuration at all, so this cannot be changed by a restart.
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     restart: unless-stopped
     environment:
       # Runtime, not build-time: substituted into the CSP's connect-src so the
