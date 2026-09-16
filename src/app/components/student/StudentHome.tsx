@@ -38,10 +38,10 @@ import { MoodCalendarModal } from '../MoodCalendarModal';
 import { useAuth } from '../../../lib/auth-context';
 import { useConversations } from '../../../hooks/useConversations';
 import { useWellnessScore } from '../../../hooks/useWellness';
-import { MOOD_META, formatTime } from '../../../lib/mood';
+import { MOOD_META, MOOD_ORDER, formatTime } from '../../../lib/mood';
 import { MoodFace } from './MoodFace';
 import api from '../../../lib/api';
-import type { DailyCheckinStatusResponse } from '../../../lib/types';
+import type { DailyCheckinStatusResponse, DailyMood } from '../../../lib/types';
 
 /** Greeting that matches the clock, so Home reads as *this* moment. */
 function greetingFor(date: Date): string {
@@ -80,6 +80,8 @@ const ACTIONS: {
   card: string;
   tile: string;
   cta_class: string;
+  /** Kio itself stands in for the icon on the card that opens Kio. */
+  mascot?: true;
 }[] = [
   {
     to: '/student/comrade',
@@ -89,7 +91,8 @@ const ACTIONS: {
     Icon: MessageCircle,
     card: 'bg-card shadow-[0_1px_2px_rgb(35_43_109_/_0.05)] hover:shadow-[0_6px_20px_-10px_rgb(35_43_109_/_0.18)]',
     tile: 'bg-indigo-50 text-indigo-500',
-    cta_class: 'text-indigo-700',
+    cta_class: 'bg-indigo-50 text-indigo-700',
+    mascot: true,
   },
   {
     to: '/student/journal',
@@ -99,7 +102,7 @@ const ACTIONS: {
     Icon: NotebookPen,
     card: 'bg-card shadow-[0_1px_2px_rgb(35_43_109_/_0.05)] hover:shadow-[0_6px_20px_-10px_rgb(35_43_109_/_0.18)]',
     tile: 'bg-teal-50 text-teal-600',
-    cta_class: 'text-teal-700',
+    cta_class: 'bg-teal-50 text-teal-700',
   },
   {
     to: '/student/activities',
@@ -109,7 +112,7 @@ const ACTIONS: {
     Icon: Sparkles,
     card: 'bg-card shadow-[0_1px_2px_rgb(35_43_109_/_0.05)] hover:shadow-[0_6px_20px_-10px_rgb(35_43_109_/_0.18)]',
     tile: 'bg-amber-50 text-amber-500',
-    cta_class: 'text-amber-700',
+    cta_class: 'bg-amber-50 text-amber-700',
   },
   {
     to: '/book-counselor',
@@ -119,9 +122,60 @@ const ACTIONS: {
     Icon: UserRound,
     card: 'bg-card shadow-[0_1px_2px_rgb(35_43_109_/_0.05)] hover:shadow-[0_6px_20px_-10px_rgb(35_43_109_/_0.18)]',
     tile: 'bg-rose-50 text-rose-500',
-    cta_class: 'text-rose-700',
+    cta_class: 'bg-rose-50 text-rose-700',
   },
 ];
+
+/**
+ * The five-point scale, shown rather than asked.
+ *
+ * `onPick` is optional on purpose: with it the faces are buttons that open the
+ * existing check-in modal, without it they are a picture of where today sits.
+ * Home never records a mood itself — the check-in needs a reason as well as a
+ * feeling, and a second, lighter path to the same field would quietly produce
+ * two grades of data.
+ */
+function MoodScale({
+  current,
+  onPick,
+}: {
+  current?: DailyMood;
+  onPick?: () => void;
+}) {
+  return (
+    <div className="mt-5 flex flex-wrap gap-x-5 gap-y-3 border-t border-primary/[0.07] pt-4">
+      {MOOD_ORDER.map((value) => {
+        const selected = current === value;
+        const content = (
+          <>
+            <MoodFace mood={value} size={44} selected={selected} />
+            <span
+              className={`text-xs ${selected ? 'font-medium text-primary' : 'text-muted-foreground'}`}
+            >
+              {MOOD_META[value].label}
+            </span>
+          </>
+        );
+
+        return onPick ? (
+          <button
+            key={value}
+            type="button"
+            onClick={onPick}
+            aria-pressed={selected}
+            className="flex flex-col items-center gap-1.5 rounded-xl px-1 py-1 transition motion-safe:hover:-translate-y-0.5"
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={value} className="flex flex-col items-center gap-1.5 px-1 py-1">
+            {content}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * Soft organic field behind the hero — the pastel wash from the brand sheet.
@@ -335,12 +389,6 @@ export function StudentHome() {
           <div className="mt-4 rounded-[20px] bg-gradient-to-br from-secondary/[0.05] to-accent/[0.05] p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
               <div className="flex items-center gap-4">
-                <span
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white shadow-[0_1px_3px_rgb(35_43_109_/_0.07)]"
-                  aria-hidden="true"
-                >
-                  <MoodFace mood={checkin.checkin.mood} size={38} />
-                </span>
                 <div className="min-w-0">
                   <p className="font-heading text-lg font-semibold text-primary">
                     You're feeling {mood.label.toLowerCase()} today
@@ -354,25 +402,25 @@ export function StudentHome() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setShowCalendar(true)}
-                  className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-white/70 hover:text-foreground"
-                >
-                  See your month
-                </button>
-                {canUpdate && (
-                  <button
-                    type="button"
-                    onClick={() => setShowUpdate(true)}
-                    className="rounded-full px-3 py-1.5 text-sm font-medium text-secondary transition hover:bg-white/70"
-                  >
-                    Update
-                  </button>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowCalendar(true)}
+                className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-white/70 hover:text-foreground"
+              >
+                See your month
+              </button>
             </div>
+
+            {/* The whole scale, the reference's way, with today's answer
+                marked. Showing all five says what the answer was *relative to*
+                — a lone face says only that something was recorded. It is not
+                a second way to check in: choosing one opens the same modal the
+                check-in itself uses, and once the window's two submissions are
+                spent the row is plain display. */}
+            <MoodScale
+              current={checkin.checkin.mood}
+              onPick={canUpdate ? () => setShowUpdate(true) : undefined}
+            />
 
             {wellnessNote && (
               <p className="mt-5 border-t border-primary/[0.07] pt-4 text-sm text-muted-foreground">
@@ -395,6 +443,7 @@ export function StudentHome() {
                 ? "We couldn't load today's check-in just now."
                 : "Whenever you're ready, it only takes a moment."}
             </p>
+            {!checkinError && <MoodScale onPick={() => setShowUpdate(true)} />}
             <button
               type="button"
               onClick={() => (checkinError ? fetchCheckin() : setShowUpdate(true))}
@@ -423,28 +472,38 @@ export function StudentHome() {
             read as a single place to choose from instead of a stats grid. */}
         <div className="mt-4 rounded-[24px] bg-muted/40 p-2 sm:p-3">
           <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-4">
-            {ACTIONS.map(({ to, title, body, cta, Icon, card, tile, cta_class }) => (
+            {ACTIONS.map(({ to, title, body, cta, Icon, card, tile, cta_class, mascot }) => (
               <Link
                 key={to}
                 to={to}
                 className={`group flex flex-col rounded-[18px] p-5 transition duration-200 motion-safe:hover:-translate-y-0.5 ${card}`}
               >
-                <span
-                  className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tile}`}
-                  aria-hidden="true"
-                >
-                  <Icon className="h-[22px] w-[22px]" strokeWidth={1.6} />
-                </span>
+                {mascot ? (
+                  // The card that opens Comrade shows Comrade. An icon of a
+                  // speech bubble describes the feature; Kio's face describes
+                  // who is on the other end of it.
+                  <span className="flex h-11 w-11 items-center justify-center" aria-hidden="true">
+                    <KioMascot size={44} withParticles={false} />
+                  </span>
+                ) : (
+                  <span
+                    className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tile}`}
+                    aria-hidden="true"
+                  >
+                    <Icon className="h-[22px] w-[22px]" strokeWidth={1.6} />
+                  </span>
+                )}
                 <span className="mt-5 font-heading text-[15px] font-semibold leading-snug text-primary">
                   {title}
                 </span>
                 <span className="mt-1.5 flex-1 text-[13.5px] leading-relaxed text-muted-foreground">
                   {body}
                 </span>
-                {/* A text link, not a filled pill. Four solid buttons in a row
-                    is what made this look like a control panel. */}
+                {/* The reference's tinted pill, in each card's own hue. Four
+                    *solid* buttons in a row read as a control panel, which is
+                    why these are washes rather than fills. */}
                 <span
-                  className={`mt-5 inline-flex items-center gap-1.5 text-sm font-medium ${cta_class}`}
+                  className={`mt-5 inline-flex w-fit items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium ${cta_class}`}
                 >
                   {cta}
                   <ArrowRight

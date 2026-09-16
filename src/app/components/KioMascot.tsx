@@ -123,14 +123,22 @@ function useBlink(enabled: boolean): boolean {
   return blinking;
 }
 
-/** Mouth per state. Measured rest curve: ends (93,96), control (100.5,104.5). */
+/**
+ * Mouth per state.
+ *
+ * Dropped 8 units below the originally measured curve. The eyes sit at y=83
+ * and the smile began at y=96, which crowded the two together; the reference
+ * leaves about twice that gap, and the extra air is most of why its face reads
+ * as calm rather than as a smiley. Everything stays well inside the body
+ * (radius 48 about y=100, so the silhouette reaches y=148).
+ */
 const MOUTH: Record<KioState, string> = {
-  idle: 'M93 96 Q100.5 104.5 108 96',
+  idle: 'M93 104 Q100.5 112.5 108 104',
   // Thinking: flatter, a fraction off-centre. Not a frown — just less certain.
-  thinking: 'M94 98 Q101 101.5 108 97.5',
-  responding: 'M93 96 Q100.5 105.5 108 96',
+  thinking: 'M94 106 Q101 109.5 108 105.5',
+  responding: 'M93 104 Q100.5 113.5 108 104',
   // Success: a touch fuller. Still a small smile, never a grin.
-  success: 'M91 95 Q100.5 107 109.5 95',
+  success: 'M91 103 Q100.5 115 109.5 103',
 };
 
 export function KioMascot({
@@ -151,6 +159,9 @@ export function KioMascot({
   // Calm throughout. "thinking" breathes a little quicker, "responding" a
   // little brighter — no state spins, bounces, or changes size sharply.
   const glowDuration = state === 'thinking' ? '3.4s' : state === 'responding' ? '2.6s' : '7s';
+  // Deliberately not a factor of the glow's cycle: two that share one sync up
+  // every few breaths, and the moment they do it stops looking alive.
+  const bodyDuration = state === 'thinking' ? '2.9s' : state === 'responding' ? '2.2s' : '5.5s';
   const glowOpacity = state === 'responding' || state === 'success' ? 1 : state === 'thinking' ? 0.92 : 0.85;
 
   const a11y = label
@@ -180,16 +191,24 @@ export function KioMascot({
         }}
       >
         <defs>
-          {/* Body. Highlight offset up and left, exactly as measured; the
-              final stop reaches zero alpha inside the drawn radius, so the
-              silhouette feathers instead of ending. */}
-          <radialGradient id={`${uid}-body`} cx="37%" cy="29%" r="76%">
+          {/* Body, on the reference's sphere build: highlight up and left,
+              deepening to lavender at the edge instead of fading out. The old
+              gradient reached zero alpha inside its own radius, which softened
+              the silhouette but also flattened it — without an edge there is
+              nothing for the rim shadow below to describe. */}
+          <radialGradient id={`${uid}-body`} cx="33%" cy="28%" r="72%">
             <stop offset="0%" stopColor="#FFFFFF" />
-            <stop offset="42%" stopColor="#FEFCFF" />
-            <stop offset="70%" stopColor="#F7F2FD" />
-            <stop offset="86%" stopColor="#EDE4FA" stopOpacity="0.96" />
-            <stop offset="95%" stopColor="#E2D5F5" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#DCCDF3" stopOpacity="0" />
+            <stop offset="45%" stopColor="#F7F5FF" />
+            <stop offset="78%" stopColor="#EDE9FE" />
+            <stop offset="100%" stopColor="#DDD6FE" />
+          </radialGradient>
+
+          {/* Rim shadow gathered low and slightly right — the underside of a
+              ball lit from the upper left. Kio navy rather than the
+              reference's purple, so the shading belongs to our palette. */}
+          <radialGradient id={`${uid}-rim`} cx="54%" cy="88%" r="52%">
+            <stop offset="0%" stopColor="#232B6D" stopOpacity="0.20" />
+            <stop offset="100%" stopColor="#232B6D" stopOpacity="0" />
           </radialGradient>
 
           {/* Atmosphere. Three hues, three positions, three sizes — the
@@ -226,6 +245,12 @@ export function KioMascot({
           <filter id={`${uid}-mote`} x="-60%" y="-60%" width="220%" height="220%">
             <feGaussianBlur stdDeviation="1.6" />
           </filter>
+
+          {/* What lifts the orb off the page. Blurred and offset downward, in
+              the violet the glow already uses so it never looks like grey. */}
+          <filter id={`${uid}-cast`} x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="8" stdDeviation="12" floodColor="#7C6EE6" floodOpacity="0.22" />
+          </filter>
         </defs>
 
         {/* ── Atmosphere ─────────────────────────────────────────── */}
@@ -254,8 +279,29 @@ export function KioMascot({
         </g>
 
         {/* ── Body ───────────────────────────────────────────────── */}
-        <circle cx="100" cy="100" r="48" fill={`url(#${uid}-body)`} />
-        <ellipse cx="84" cy="80" rx="20" ry="15" fill={`url(#${uid}-sheen)`} />
+        {/* Grouped so the sphere and the face on it breathe as one thing — the
+            reference animates the whole character, not just the light, and a
+            face held rigid while its glow moves reads as a picture with an
+            effect behind it. */}
+        <g
+          style={
+            reduced
+              ? undefined
+              : {
+                  animation: `kio-body-breathe ${bodyDuration} ease-in-out infinite`,
+                  transformOrigin: '100px 100px',
+                }
+          }
+        >
+          <circle
+            cx="100"
+            cy="100"
+            r="48"
+            fill={`url(#${uid}-body)`}
+            filter={`url(#${uid}-cast)`}
+          />
+          <circle cx="100" cy="100" r="48" fill={`url(#${uid}-rim)`} />
+          <ellipse cx="84" cy="80" rx="20" ry="15" fill={`url(#${uid}-sheen)`} />
 
         {/* ── Face ───────────────────────────────────────────────── */}
         <g
@@ -273,14 +319,15 @@ export function KioMascot({
           <circle cx="115.6" cy="80.6" r="1.7" fill="#FFFFFF" fillOpacity="0.75" />
         </g>
 
-        <path
-          d={MOUTH[state]}
-          fill="none"
-          stroke="#5939CA"
-          strokeWidth="3.2"
-          strokeLinecap="round"
-          style={{ transition: 'd 420ms ease-in-out' }}
-        />
+          <path
+            d={MOUTH[state]}
+            fill="none"
+            stroke="#5939CA"
+            strokeWidth="3.2"
+            strokeLinecap="round"
+            style={{ transition: 'd 420ms ease-in-out' }}
+          />
+        </g>
 
         {/* ── Motes ──────────────────────────────────────────────── */}
         {withParticles && (
