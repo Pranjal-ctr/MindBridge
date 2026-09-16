@@ -19,7 +19,15 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import AuditLog, RiskAssessment, StudentProfile, User
+from app.audit import build_audit_row
+from app.audit_actions import (
+    SAFETY_EVENT_PREFIX,
+    SAFETY_SOFT_SIGNAL_PREFIX,
+    SYSTEM_ACTOR_ROLE,
+    AuditEntity,
+    AuditSeverity,
+)
+from database.models import RiskAssessment, StudentProfile, User
 
 logger = logging.getLogger(__name__)
 
@@ -303,22 +311,44 @@ async def log_safety_events(
     if not hard and not soft:
         return []
 
+    # School scope, resolved once for every row written below.
+    tenant_id = None
+
     async with async_session_factory() as db:
+        tenant_id = (await db.execute(
+            select(User.tenant_id).where(User.user_id == student_user_id)
+        )).scalar_one_or_none()
+
+        # build_audit_row rather than log_audit: these rows go into this
+        # function's own session, which is committed below alongside the
+        # tripwire, and log_audit would flush each one separately.
+        #
+        # The matched *category* is recorded, never the text that matched it.
+        # A row saying "self_harm was detected in conversation X" is what an
+        # operator needs; the sentence the student typed is not.
         for event_type in hard:
-            db.add(AuditLog(
-                audit_id=uuid.uuid4(),
+            db.add(build_audit_row(
                 user_id=student_user_id,
-                action=f"safety_event:{event_type}",
-                entity_type="conversation",
+                action=f"{SAFETY_EVENT_PREFIX}{event_type}",
+                entity_type=AuditEntity.CONVERSATION,
                 entity_id=conversation_id,
+                details={"category": event_type, "signal": "hard"},
+                actor_role=SYSTEM_ACTOR_ROLE,
+                tenant_id=tenant_id,
+                severity=AuditSeverity.CRITICAL,
             ))
         for event_type in soft:
-            db.add(AuditLog(
-                audit_id=uuid.uuid4(),
+            db.add(build_audit_row(
                 user_id=student_user_id,
-                action=f"safety_soft_signal:{event_type}",
-                entity_type="conversation",
+                action=f"{SAFETY_SOFT_SIGNAL_PREFIX}{event_type}",
+                entity_type=AuditEntity.CONVERSATION,
                 entity_id=conversation_id,
+                details={"category": event_type, "signal": "soft"},
+                actor_role=SYSTEM_ACTOR_ROLE,
+                tenant_id=tenant_id,
+                # Soft signals are hyperbole-prone and deliberately never
+                # alert, so they must not read as critical in the trail.
+                severity=AuditSeverity.NOTICE,
             ))
 
         if hard:
@@ -330,5 +360,3 @@ async def log_safety_events(
 
         await db.commit()
     return hard + soft
-
-    return events

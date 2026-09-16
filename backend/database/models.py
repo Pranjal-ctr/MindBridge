@@ -27,6 +27,8 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy import event as sa_event
+from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -1332,6 +1334,13 @@ class AuditLog(Base, TimestampMixin):
         # proposed dropping it on every run. It backs the admin audit log's
         # default ordering, which is by recency over the whole table.
         Index("ix_audit_logs_created_at", "created_at"),
+        # The admin page filters by action and by school, both newest-first.
+        # Without these, every filtered view is a full scan plus a sort.
+        Index("ix_audit_logs_action_created", "action", "created_at"),
+        Index("ix_audit_logs_tenant_created", "tenant_id", "created_at"),
+        # Audit event -> request id -> application log -> Sentry. The whole
+        # correlation story depends on this lookup being cheap.
+        Index("ix_audit_logs_request_id", "request_id"),
     )
 
     audit_id: Mapped[uuid.UUID] = mapped_column(
@@ -1347,8 +1356,79 @@ class AuditLog(Base, TimestampMixin):
     user_agent: Mapped[Optional[str]] = mapped_column(String(255))
     details: Mapped[Optional[dict]] = mapped_column(JSONB)
 
+    # --- Added by migration 018 -------------------------------------
+    # The actor's role *at the time of the event*. Denormalised on purpose:
+    # a role change later must not rewrite the history of what the actor was
+    # permitted to do when they did it.
+    actor_role: Mapped[Optional[str]] = mapped_column(String(50))
+    # School scope. Denormalised for the same reason, and because the actor
+    # may be a platform admin acting on a school they do not belong to --
+    # in which case this is the *subject's* school, not the actor's.
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="SET NULL")
+    )
+    # "success" | "failure". A failed action is often the more interesting
+    # record -- a rejected login or a refused break-glass attempt.
+    result: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
+    # "info" | "notice" | "warning" | "critical" -- lets an operator sort a
+    # noisy day by what actually matters.
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="info")
+    # Correlation id from app.observability, so an audit row joins to the
+    # structured logs and the Sentry event for the same request.
+    request_id: Mapped[Optional[str]] = mapped_column(String(64))
+
     # Relationships
     user: Mapped[Optional[User]] = relationship(back_populates="audit_logs")
+
+
+# The application has no code path that updates or deletes an audit row, and
+# this makes that a property of the database rather than a property of nobody
+# having written the code yet. Enforced here rather than only in migration 018
+# so it is present under create_all too -- the test suite builds its schema
+# from these models, so a migration-only trigger would leave the append-only
+# test asserting against a table that has no trigger.
+#
+# Safe because user and tenant deletion are both *soft* in this codebase, so
+# the ON DELETE SET NULL on user_id/tenant_id never actually fires from the
+# application path. A hard delete of a user would now fail loudly instead of
+# quietly rewriting history, which is the correct outcome for an audit trail.
+#
+# This is a guard against application bugs, not against a DBA: anyone with
+# table ownership can drop the trigger. Defence in depth for that is a
+# restricted role (INSERT + SELECT only), documented in docs/audit-logging.md.
+#
+# One statement per entry: asyncpg sends DDL as a prepared statement, which
+# refuses multiple commands in a single execute. Kept character-identical to
+# the copy in migration 018.
+_AUDIT_APPEND_ONLY_DDL = (
+    """
+    CREATE OR REPLACE FUNCTION kio_audit_logs_append_only() RETURNS TRIGGER AS $$
+    BEGIN
+        RAISE EXCEPTION 'audit_logs is append-only: % is not permitted', TG_OP
+            USING ERRCODE = 'restrict_violation';
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    "DROP TRIGGER IF EXISTS audit_logs_append_only ON audit_logs",
+    """
+    CREATE TRIGGER audit_logs_append_only
+        BEFORE UPDATE OR DELETE ON audit_logs
+        FOR EACH ROW EXECUTE FUNCTION kio_audit_logs_append_only()
+    """,
+    "DROP TRIGGER IF EXISTS audit_logs_no_truncate ON audit_logs",
+    """
+    CREATE TRIGGER audit_logs_no_truncate
+        BEFORE TRUNCATE ON audit_logs
+        FOR EACH STATEMENT EXECUTE FUNCTION kio_audit_logs_append_only()
+    """,
+)
+
+
+@sa_event.listens_for(AuditLog.__table__, "after_create")
+def _install_audit_append_only(target, connection, **kw):  # noqa: ARG001
+    """Install the append-only trigger whenever audit_logs is created."""
+    for statement in _AUDIT_APPEND_ONLY_DDL:
+        connection.execute(sa_text(statement))
 
 
 # ===================================================================

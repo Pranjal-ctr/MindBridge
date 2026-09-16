@@ -158,6 +158,7 @@ async def book_counselor(
             counselor_id=payload.counselor_id,
             starts_at=_as_utc(payload.starts_at),
             booked_by_user_id=current_user.user_id,
+            booked_by_role=current_user.role,
             request=request,
         )
 
@@ -443,11 +444,15 @@ async def my_schedules(
 async def add_schedule(
     payload: ScheduleCreate,
     current_user: CurrentUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Add a recurring working interval. End at or before start means overnight."""
     counselor_id = await get_counselor_id(db, current_user.user_id)
-    return await create_schedule(db, counselor_id, payload)
+    return await create_schedule(
+        db, counselor_id, payload,
+        actor_user_id=current_user.user_id, request=request,
+    )
 
 
 @router.patch(
@@ -474,11 +479,15 @@ async def edit_schedule(
 async def remove_schedule(
     schedule_id: uuid.UUID,
     current_user: CurrentUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Remove a recurring interval. Sessions already booked are unaffected."""
     counselor_id = await get_counselor_id(db, current_user.user_id)
-    await delete_schedule(db, counselor_id, schedule_id)
+    await delete_schedule(
+        db, counselor_id, schedule_id,
+        actor_user_id=current_user.user_id, request=request,
+    )
 
 
 @router.get(
@@ -505,11 +514,15 @@ async def my_exceptions(
 async def add_exception(
     payload: ExceptionCreate,
     current_user: CurrentUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Add time off (omit both times for a whole day) or extra availability."""
     counselor_id = await get_counselor_id(db, current_user.user_id)
-    return await create_exception(db, counselor_id, payload)
+    return await create_exception(
+        db, counselor_id, payload,
+        actor_user_id=current_user.user_id, request=request,
+    )
 
 
 @router.delete(
@@ -520,11 +533,15 @@ async def add_exception(
 async def remove_exception(
     exception_id: uuid.UUID,
     current_user: CurrentUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Remove an exception, restoring the recurring pattern for that date."""
     counselor_id = await get_counselor_id(db, current_user.user_id)
-    await delete_exception(db, counselor_id, exception_id)
+    await delete_exception(
+        db, counselor_id, exception_id,
+        actor_user_id=current_user.user_id, request=request,
+    )
 
 
 @router.get(

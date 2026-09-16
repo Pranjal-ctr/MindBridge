@@ -13,11 +13,13 @@ from app.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.audit import log_audit
+from app.audit_actions import AuditAction, AuditEntity, AuditSeverity
 from app.conversations.schemas import (
     ConversationCreate,
     ConversationResponse,
@@ -32,6 +34,8 @@ async def create_conversation(
     db: AsyncSession,
     student_id: uuid.UUID,
     payload: ConversationCreate,
+    actor_user_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> ConversationResponse:
     """Create a new conversation for a student."""
     conversation = Conversation(
@@ -43,6 +47,20 @@ async def create_conversation(
     db.add(conversation)
     await db.flush()
     await db.refresh(conversation)
+    # Session-level only. Individual messages are deliberately never audited:
+    # the volume would dwarf every other event, and a row per message is a
+    # minute-by-minute record of when a child was distressed. The title is
+    # excluded for the same reason -- it is generated *from* the conversation.
+    await log_audit(
+        db,
+        user_id=actor_user_id,
+        action=AuditAction.COMRADE_SESSION_STARTED,
+        entity_type=AuditEntity.CONVERSATION,
+        entity_id=conversation.conversation_id,
+        request=request,
+        actor_role="student",
+        severity=AuditSeverity.INFO,
+    )
     return ConversationResponse.model_validate(conversation)
 
 
@@ -127,11 +145,24 @@ async def delete_conversation(
     db: AsyncSession,
     conversation_id: uuid.UUID,
     student_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> None:
     """Soft-delete a conversation by archiving it."""
     conversation = await get_conversation(db, conversation_id, student_id)
     conversation.is_archived = True
     await db.flush()
+    await log_audit(
+        db,
+        user_id=actor_user_id,
+        action=AuditAction.COMRADE_SESSION_ENDED,
+        entity_type=AuditEntity.CONVERSATION,
+        entity_id=conversation.conversation_id,
+        details={"reason": "archived", "total_messages": conversation.total_messages},
+        request=request,
+        actor_role="student",
+        severity=AuditSeverity.INFO,
+    )
 
 
 async def send_message(

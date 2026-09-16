@@ -167,10 +167,14 @@ export interface StaffUserCreatePayload {
 
 // ── Audit Logs ────────────────────────────────────────────────────────
 
+export type AuditResult = 'success' | 'failure';
+export type AuditSeverity = 'info' | 'notice' | 'warning' | 'critical';
+
 export interface AuditLogEntry {
   audit_id: string;
   user_id: string | null;
   user_name: string | null;
+  /** The actor's role recorded on the event, not their role today. */
   user_role: string | null;
   action: string;
   entity_type: string | null;
@@ -179,6 +183,12 @@ export interface AuditLogEntry {
   user_agent: string | null;
   details: Record<string, unknown> | null;
   created_at: string;
+  tenant_id: string | null;
+  school_name: string | null;
+  result: AuditResult;
+  severity: AuditSeverity;
+  /** Correlation id — joins this event to its application logs and Sentry. */
+  request_id: string | null;
 }
 
 export interface AuditLogListResponse {
@@ -191,6 +201,12 @@ export interface AuditLogFilters {
   action?: string;
   date_from?: string;
   date_to?: string;
+  tenant_id?: string;
+  actor_role?: string;
+  entity_type?: string;
+  result?: AuditResult;
+  severity?: AuditSeverity;
+  request_id?: string;
 }
 
 // ── Platform Analytics ────────────────────────────────────────────────

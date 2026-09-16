@@ -18,6 +18,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import router as ai_router
+from app.audit import log_audit
+from app.audit_actions import (
+    SYSTEM_ACTOR_ROLE,
+    AuditAction,
+    AuditEntity,
+    AuditSeverity,
+)
 from app.intelligence.config import RISK_LEVEL_RANK, derive_risk_level, load_config
 from app.intelligence.parsing import parse_json_response
 from app.intelligence.prompts import (
@@ -37,6 +44,7 @@ from database.models import (
     RiskAssessment,
     StressDistribution,
     StudentProfile,
+    User,
     WellnessRecord,
 )
 
@@ -271,6 +279,49 @@ async def run_message_analysis(
     previous_level, new_level = await _sync_profile_risk_level(
         db, student_id, derived_level, int(crisis_cfg["deescalate_after"])
     )
+
+    # Actor + school for the two audit rows below. One indexed join on the
+    # background analysis path, not on anything a student is waiting for.
+    _actor = (await db.execute(
+        select(User.user_id, User.tenant_id)
+        .join(StudentProfile, StudentProfile.user_id == User.user_id)
+        .where(StudentProfile.student_id == student_id)
+    )).one_or_none()
+    _actor_user_id = _actor.user_id if _actor else None
+    _tenant_id = _actor.tenant_id if _actor else None
+
+    # Score and level, never `analysis.risk.summary` -- that is a generated
+    # narrative about a child's mental state, and it already lives on the
+    # assessment row behind clinical RBAC.
+    await log_audit(
+        db,
+        user_id=_actor_user_id,
+        action=AuditAction.RISK_ASSESSMENT_CREATED,
+        entity_type=AuditEntity.RISK_ASSESSMENT,
+        entity_id=assessment.risk_id,
+        details={
+            "risk_level": derived_level,
+            "risk_score": float(assessment.risk_score),
+            "generated_by": "ai_pipeline",
+            "safety_floor_applied": floor_applied,
+        },
+        actor_role=SYSTEM_ACTOR_ROLE,
+        tenant_id=_tenant_id,
+        severity=AuditSeverity.NOTICE,
+    )
+
+    if previous_level != new_level:
+        await log_audit(
+            db,
+            user_id=_actor_user_id,
+            action=AuditAction.RISK_LEVEL_CHANGED,
+            entity_type=AuditEntity.RISK_ASSESSMENT,
+            entity_id=assessment.risk_id,
+            details={"from": previous_level, "to": new_level},
+            actor_role=SYSTEM_ACTOR_ROLE,
+            tenant_id=_tenant_id,
+            severity=AuditSeverity.WARNING,
+        )
 
     # 2. Emotion snapshot
     db.add(EmotionSnapshot(

@@ -17,11 +17,18 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import log_audit
+from app.audit_actions import (
+    SYSTEM_ACTOR_ROLE,
+    AuditAction,
+    AuditEntity,
+    AuditResult,
+    AuditSeverity,
+)
 from app.intelligence.analysis import AnalysisOutcome
 from app.intelligence.config import load_config
 from app.notifications.service import notify_users
 from database.models import (
-    AuditLog,
     ParentProfile,
     RiskAssessment,
     SchoolSettings,
@@ -130,14 +137,34 @@ async def evaluate_and_trigger_crisis(
         event_description=f"Risk level {assessment.risk_level} -- queued for counselor review",
     ))
 
+    # School scope for the audit row. One indexed primary-key lookup; the
+    # notification fan-out below re-reads the same user, but only on the
+    # branch that is not suppressed, so this cannot be folded into it.
+    tenant_id = (await db.execute(
+        select(User.tenant_id).where(User.user_id == student_user_id)
+    )).scalar_one_or_none()
+
     # 3. Audit log
-    db.add(AuditLog(
+    #
+    # The actor is the student only in the sense that the assessment is about
+    # them -- nobody *performed* this action. It is raised by the analysis
+    # pipeline, so actor_role records that rather than leaving a reader to
+    # assume a student triggered their own crisis workflow.
+    #
+    # risk_level is recorded because the whole point of the row is which
+    # threshold was crossed. The narrative that produced it is not: the
+    # assessment is reachable by id for anyone with clinical standing to read it.
+    await log_audit(
+        db,
         user_id=student_user_id,
-        action="crisis_workflow_triggered",
-        entity_type="risk_assessment",
+        action=AuditAction.CRISIS_EVENT_CREATED,
+        entity_type=AuditEntity.RISK_ASSESSMENT,
         entity_id=assessment.risk_id,
-    ))
-    await db.flush()
+        details={"risk_level": assessment.risk_level},
+        actor_role=SYSTEM_ACTOR_ROLE,
+        tenant_id=tenant_id,
+        severity=AuditSeverity.CRITICAL,
+    )
 
     # 4. Notification fan-out (suppressed if we alerted for this student recently)
     if not await _recently_alerted(db, student_id, assessment.risk_id):
@@ -163,6 +190,20 @@ async def evaluate_and_trigger_crisis(
                     title="High-risk alert",
                     message=f"High-risk alert: {student_name} -- review required.",
                 )
+                # Recipient *count*, never the names: this row exists to prove
+                # the alert fanned out, and reconstructing who was told what
+                # about which student is not what an audit trail is for.
+                await log_audit(
+                    db,
+                    user_id=student_user_id,
+                    action=AuditAction.CRISIS_NOTIFICATION_CREATED,
+                    entity_type=AuditEntity.NOTIFICATION,
+                    entity_id=assessment.risk_id,
+                    details={"channel": "in_app", "recipient_count": len(staff_ids)},
+                    actor_role=SYSTEM_ACTOR_ROLE,
+                    tenant_id=tenant_id,
+                    severity=AuditSeverity.CRITICAL,
+                )
 
                 # Email as well as in-app: the in-app badge only reaches staff
                 # who are already signed in. Non-fatal — the queue entry above
@@ -172,10 +213,42 @@ async def evaluate_and_trigger_crisis(
                         await _email_staff_alert(
                             db, staff_ids, student_name, assessment.risk_level
                         )
+                        email_error = None
                     except Exception as e:  # noqa: BLE001
+                        email_error = e
                         logger.warning(
                             "Crisis staff email failed (non-fatal): %s", str(e)
                         )
+
+                    # A crisis alert that never reached anyone is the single
+                    # most important thing this table can tell an operator, so
+                    # the failure is recorded as loudly as the success.
+                    await log_audit(
+                        db,
+                        user_id=student_user_id,
+                        action=(
+                            AuditAction.CRISIS_NOTIFICATION_FAILED
+                            if email_error is not None
+                            else AuditAction.CRISIS_NOTIFICATION_SENT
+                        ),
+                        entity_type=AuditEntity.NOTIFICATION,
+                        entity_id=assessment.risk_id,
+                        details={
+                            "channel": "email",
+                            "recipient_count": len(staff_ids),
+                            # Exception *type* only. The message can carry an
+                            # SMTP transcript, which can carry an address.
+                            **({"error_type": type(email_error).__name__}
+                               if email_error is not None else {}),
+                        },
+                        actor_role=SYSTEM_ACTOR_ROLE,
+                        tenant_id=tenant_id,
+                        result=(
+                            AuditResult.FAILURE if email_error is not None
+                            else AuditResult.SUCCESS
+                        ),
+                        severity=AuditSeverity.CRITICAL,
+                    )
 
             # Parents: content-free, gated by school settings + platform config
             if crisis_cfg.get("notify_parents", True):

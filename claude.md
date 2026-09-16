@@ -1,8 +1,8 @@
 # Kio SaaS App — Project Context
 
 > **Last Updated:** September 11, 2026
-> **Status:** Production hardening complete -- availability engine, revocable sessions, observability, consent layer
-> **Tests:** 332 backend (`pytest tests/`) + 42 frontend (`npm test`)
+> **Status:** Production hardening complete -- audit trail, availability engine, revocable sessions, observability, consent layer
+> **Tests:** 370 backend (`pytest tests/`) + 42 frontend (`npm test`)
 
 ---
 
@@ -166,6 +166,101 @@ npm run build
 ---
 
 ## 📝 Change Log
+
+### September 16, 2026 — Audit trail: append-only, correlated, content-minimal
+- **The table was missing the four columns an incident actually needs.**
+  `audit_logs` had actor/action/target since migration 001, which answers "what
+  happened" but not "who were they acting *as*", "which school does this belong
+  to", "did it succeed", or "which request was this". Migration 018 adds
+  `actor_role`, `tenant_id`, `result`, `severity`, `request_id` (all additive;
+  nothing dropped or renamed), plus indexes on `(action, created_at)`,
+  `(tenant_id, created_at)` and `request_id`.
+  Role and school are **denormalised on purpose**: a later role change must not
+  rewrite what someone was permitted to do when they did it, and when a platform
+  admin acts on a school the event belongs to the school **acted upon**, not to
+  the admin's own tenant. `previous_state`/`new_state` were deliberately *not*
+  added — `details.changed` carries changed field *names*, which answers the
+  operational question without making the audit table a second copy of records
+  holding a child's DOB, guardian details and risk level.
+- **Seven call sites were building `AuditLog(...)` by hand** and bypassing
+  `log_audit()` entirely, so they would silently have missed every new column.
+  All now go through the helper. One was an outright bug: break-glass access
+  did `action=f"break_glass_chat_access: {reason}"`, interpolating admin-typed
+  free text into the **indexed action column** — so no two break-glass events
+  ever shared an action and the UI's filter could only ever prefix-match. The
+  reason is metadata; it moved to `details`.
+- **Append-only is now the database's property, not the absence of code.** A
+  Postgres trigger raises on `UPDATE`, `DELETE` and `TRUNCATE`. Installed by
+  migration 018 *and* by an `after_create` hook in `models.py`, because the test
+  suite builds its schema with `create_all` — a migration-only trigger would
+  leave the append-only test asserting against a table that has none. Safe
+  because user and tenant deletion here are both **soft**, so the
+  `ON DELETE SET NULL` on `user_id` never fires from the app path. No
+  UPDATE/DELETE endpoint exists and a test asserts that against the **live route
+  table**, so adding one later fails CI rather than shipping quietly.
+- **Coverage** (`app/audit_actions.py` — constants, not free strings; a typo in
+  a string literal fails nowhere, it just creates an event class nobody will
+  filter for). Values keep the repo's dotted-lowercase convention and the nine
+  pre-existing actions keep their **exact** historical strings, so old rows and
+  saved filters still work. New: the whole auth lifecycle (login success/failure,
+  logout, Google, signup, verify, password reset, refresh rotation, replay
+  revocation), counselor registration + **verification** (which gates the public
+  booking directory), AI routing and **prompt activation** (which changes what
+  Comrade says to every student), schedule/time-off CRUD, booking conflicts,
+  risk-case and risk-queue views, crisis notification created/sent/**failed**,
+  and reads/exports of the audit log itself.
+- **Six constants are declared but deliberately not emitted** — the operations
+  don't exist: no endpoint changes a user's role or school,
+  `counselor_school_assignments` is only ever *read*, and `risk_assessments`
+  has no assignee column. They are recorded in `docs/audit-logging.md` so whoever builds those
+  wires the event rather than inventing a fifth spelling.
+- **Privacy.** Audit rows say *that* something happened and to which record,
+  never what was said. Safety events record the matched **category**, never the
+  sentence that matched; crisis rows record a recipient **count**, never names;
+  risk rows record levels, never `summary`; config rows record the **key**,
+  never the value. Backstopped by `scrub_details()` (redacts ~25 key patterns,
+  walks nested structures, caps strings at 200 chars) and by tests that sweep
+  every row written during a real login/refresh/logout/safety-scan and assert no
+  JWT-shaped string, password, or scanned message text is present anywhere.
+- **Correlation reuses the existing request id** — `log_audit()` reads the
+  `ContextVar` from `app/observability.py` rather than threading a parameter
+  through ~60 call sites, and no second scheme was introduced. One id now joins
+  audit row → structured log → Sentry event; the admin page filters on it.
+- **Failure policy is explicit per event class.** `log_audit()` joins the
+  caller's transaction and **fails closed** (admin, RBAC, school, break-glass,
+  config, booking) — an unrecorded change is worse than a failed one. New
+  `log_audit_detached()` commits in its own session and **fails open** (auth,
+  safety, crisis, booking conflicts): those paths frequently *raise*, so a row
+  on the caller's session would vanish exactly when it becomes evidence, and an
+  audit problem must never lock every user out or block a crisis alert reaching
+  a counselor. No queue, broker or worker was added.
+- **Export is streamed and bounded** — 500 rows per round trip instead of
+  building the whole file in memory, capped at 10,000 with the cap echoed in
+  `X-Export-Max-Rows` (a silently truncated audit export is a compliance
+  problem, not a UX one). The export event is committed **before** the first
+  byte: FastAPI closes `yield` dependencies before the body streams, so the
+  generator opens its own session — a bug the test client could not have caught,
+  since `get_db` is overridden there. Verified against a real server.
+- **Admin UI**: actor/role/school/result/severity/request-id columns, server-side
+  filters for each, and a detail drawer. Filtering and paging stay server-side —
+  the table is append-only and unbounded. Pagination orders by
+  `(created_at, audit_id)`; `created_at` alone is not unique, so without the
+  tiebreak pages silently repeat rows.
+- **Access is platform-admin only**, enforced server-side (tested across all four
+  other roles). School admins get **no** audit access: they can already see their
+  roster, and a row naming which counselor opened which student's risk case is
+  sensitive even inside one school. The `tenant_id` column and the scoped query
+  exist and are tested, so enabling it later is a one-line change.
+- ⚠️ **Retention is an open legal/product decision and no automatic deletion is
+  implemented.** It is deliberately not guessed at — it depends on the same
+  unanswered DPDP questions already recorded in `app/consent/policy.py`. Note
+  that the append-only trigger makes future purging *deliberately awkward*: any
+  retention policy must ship as a migration that drops the trigger, purges, and
+  reinstalls it.
+- Docs: new `docs/audit-logging.md` (what is and is not recorded, who can read
+  it, append-only, failure policy, retention, and how audit logs / structured
+  logs / Sentry relate), plus a section in `docs/production-configuration.md`.
+- Tests: 38 new in `backend/tests/test_audit.py` (370 backend total).
 
 ### September 11, 2026 — Production hardening: observability, revocable sessions, schema drift
 - **Two outright bugs.** `/health/db` returned **200** with an `"unhealthy"` body when
@@ -603,9 +698,11 @@ npm run build
 - Platform admin: all 9 pages, cross-tenant risk oversight, audit logs, AI routing
 - Deployment: Dockerfiles, compose, nginx, `render.yaml`, CI (tests, `alembic check`,
   typecheck, frontend tests, docker build), Sentry + request ids
+- Audit trail: append-only (DB-enforced), request-correlated, content-minimal,
+  platform-admin only, streamed CSV export — see `docs/audit-logging.md`
 
-**Numbers:** 29 frontend routes · 20 backend modules · 47 tables · 17 migrations ·
-332 backend tests · 42 frontend tests
+**Numbers:** 29 frontend routes · 20 backend modules · 47 tables · 18 migrations ·
+370 backend tests · 42 frontend tests
 
 **Known gaps** — see Next Steps below.
 
@@ -721,10 +818,17 @@ School Code: `RHS2026`
    a scanning story before students can attach anything.
 4. **Consent backfill** — the age gate covers new signups only. Existing accounts are test
    data, so no backfill was written; this becomes real work the moment there are real users.
-5. **Retire `counselor_availability`** — deprecated by the availability engine but left
+5. **Audit-log retention** — no retention period is defined and no automatic
+   deletion exists. This is a legal/product decision, not an oversight: it turns
+   on the same unanswered DPDP questions as item 1, plus whether audit records
+   about a student are in scope for an erasure request. Do not add a retention
+   job or purge endpoint until a period is agreed. Note the append-only trigger
+   means any purge must ship as a migration that drops it, deletes, and
+   reinstalls it — awkward by design.
+6. **Retire `counselor_availability`** — deprecated by the availability engine but left
    populated because those rows explain how existing bookings came to exist. Droppable once
    no live booking references them.
-6. **`test_phase4.py`** at the backend root is a live-server script, not a unit test: it
+7. **`test_phase4.py`** at the backend root is a live-server script, not a unit test: it
    hits `localhost:8000` at import and breaks a bare `pytest`. CI runs `pytest tests/`, so
    it is invisible there. Move it under a marker or into `scripts/`.
 

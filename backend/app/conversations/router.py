@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.schemas import (
@@ -49,11 +49,15 @@ router = APIRouter()
 async def create_new_conversation(
     payload: ConversationCreate,
     current_user: CurrentUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Create a new conversation. Students only."""
     student_id = await get_student_id_for_user(db, current_user.user_id)
-    return await create_conversation(db, student_id, payload)
+    return await create_conversation(
+        db, student_id, payload,
+        actor_user_id=current_user.user_id, request=request,
+    )
 
 
 @router.get("/", response_model=ConversationListResponse)
@@ -104,11 +108,15 @@ async def update_conversation_endpoint(
 async def delete_conversation_endpoint(
     conversation_id: uuid.UUID,
     current_user: CurrentUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Archive (soft-delete) a conversation."""
     student_id = await get_student_id_for_user(db, current_user.user_id)
-    await delete_conversation(db, conversation_id, student_id)
+    await delete_conversation(
+        db, conversation_id, student_id,
+        actor_user_id=current_user.user_id, request=request,
+    )
 
 
 # -------------------------------------------------------------------

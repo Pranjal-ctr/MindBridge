@@ -30,6 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from database.models import RefreshSession
 
+from app.audit import log_audit_detached
+from app.audit_actions import AuditAction, AuditEntity, AuditResult, AuditSeverity
+
 logger = logging.getLogger(__name__)
 
 # Reasons are short codes rather than prose so they can be counted in a query:
@@ -91,7 +94,15 @@ async def revoke_all_for_user(db: AsyncSession, user_id: uuid.UUID, reason: str)
         .values(revoked_at=datetime.now(timezone.utc), revoked_reason=reason)
     )
     await db.flush()
-    return result.rowcount or 0
+    revoked = result.rowcount or 0
+    await log_audit_detached(
+        user_id=user_id,
+        action=AuditAction.SESSION_REVOKED,
+        entity_type=AuditEntity.REFRESH_SESSION,
+        details={"reason": reason, "sessions_revoked": revoked},
+        severity=AuditSeverity.NOTICE,
+    )
+    return revoked
 
 
 async def consume_session(
@@ -129,6 +140,22 @@ async def consume_session(
             session.family_id,
             revoked,
         )
+        # Detached because this path raises: a row added to the caller's
+        # session would be rolled back with it. A replayed refresh token means
+        # a copy is in circulation on a shared machine -- the one event here
+        # that most needs to survive the failure that produced it.
+        #
+        # No token, no fingerprint of one: the session id names the row, which
+        # is enough to reconstruct what happened without carrying a credential.
+        await log_audit_detached(
+            user_id=session.user_id,
+            action=AuditAction.REFRESH_TOKEN_REVOKED,
+            entity_type=AuditEntity.REFRESH_SESSION,
+            entity_id=session.session_id,
+            details={"reason": REASON_REPLAY, "sessions_revoked": revoked},
+            result=AuditResult.FAILURE,
+            severity=AuditSeverity.CRITICAL,
+        )
         raise generic
 
     expires_at = session.expires_at
@@ -140,6 +167,17 @@ async def consume_session(
     session.revoked_at = datetime.now(timezone.utc)
     session.revoked_reason = REASON_ROTATED
     await db.flush()
+
+    # Routine and high-volume -- one row per refresh, per active user. Kept at
+    # INFO so it never competes with the replay event above for attention; its
+    # value is as the baseline that makes an anomalous rotation pattern visible.
+    await log_audit_detached(
+        user_id=session.user_id,
+        action=AuditAction.REFRESH_TOKEN_ROTATED,
+        entity_type=AuditEntity.REFRESH_SESSION,
+        entity_id=session.session_id,
+        severity=AuditSeverity.INFO,
+    )
     return session
 
 

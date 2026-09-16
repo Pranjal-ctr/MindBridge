@@ -12,7 +12,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audit import log_audit
+from app.audit import log_audit, log_audit_detached
+from app.audit_actions import AuditAction, AuditEntity, AuditResult, AuditSeverity
 from app.admin.schemas import (
     AdminRiskDetail,
     AdminRiskRow,
@@ -146,10 +147,13 @@ async def create_tenant(
     await db.flush()
     await db.refresh(tenant)
     await log_audit(
-        db, user_id=actor_id, action="tenant.create",
-        entity_type="tenant", entity_id=tenant.tenant_id,
+        db, user_id=actor_id, action=AuditAction.SCHOOL_CREATED,
+        entity_type=AuditEntity.TENANT, entity_id=tenant.tenant_id,
         details={"tenant_name": tenant.tenant_name, "school_code": tenant.school_code},
-        request=request,
+        request=request, actor_role="admin",
+        # The event belongs to the school created, not to the admin's own.
+        tenant_id=tenant.tenant_id,
+        severity=AuditSeverity.NOTICE,
     )
     return TenantResponse.model_validate(tenant)
 
@@ -183,16 +187,23 @@ async def update_tenant(
     await db.refresh(tenant)
 
     if new_status == "suspended":
-        action = "tenant.suspend"
+        action = AuditAction.SCHOOL_SUSPENDED
     elif new_status == "active":
-        action = "tenant.activate"
+        action = AuditAction.SCHOOL_ACTIVATED
     else:
-        action = "tenant.update"
+        action = AuditAction.SCHOOL_UPDATED
     await log_audit(
         db, user_id=actor_id, action=action,
-        entity_type="tenant", entity_id=tenant.tenant_id,
+        entity_type=AuditEntity.TENANT, entity_id=tenant.tenant_id,
+        # Field *names* only, never the values -- this payload can carry seat
+        # limits and billing detail that the trail has no need to duplicate.
         details={"changed": sorted(update_data.keys())},
-        request=request,
+        request=request, actor_role="admin", tenant_id=tenant.tenant_id,
+        # Suspending a school signs out every one of its users.
+        severity=(
+            AuditSeverity.WARNING if new_status == "suspended"
+            else AuditSeverity.NOTICE
+        ),
     )
     return TenantResponse.model_validate(tenant)
 
@@ -282,16 +293,33 @@ async def _log_break_glass(
     entity_type: str,
     entity_id: uuid.UUID,
     reason: str,
+    tenant_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> None:
-    """Every break-glass access writes an audit row; the reason is part of the action."""
-    db.add(AuditLog(
-        audit_id=uuid.uuid4(),
+    """
+    Every break-glass access writes an audit row.
+
+    The reason used to be interpolated into the action name, which made the
+    action column a free-text field: admin-typed prose landed in the indexed
+    column the admin page filters on, so no two break-glass events ever shared
+    an action string and the "Break-glass" filter could only ever prefix-match.
+    The reason is structured metadata; it belongs in details.
+    """
+    await log_audit(
+        db,
         user_id=admin_user_id,
-        action=f"break_glass_chat_access: {reason[:80]}",
+        action=AuditAction.BREAK_GLASS_CHAT_ACCESS,
         entity_type=entity_type,
         entity_id=entity_id,
-    ))
-    await db.flush()
+        details={"reason": reason[:200]},
+        request=request,
+        actor_role="admin",
+        tenant_id=tenant_id,
+        # A platform admin reading a student's conversations is the single
+        # most sensitive thing this product permits. It should never be
+        # buried among routine events.
+        severity=AuditSeverity.CRITICAL,
+    )
 
 
 async def break_glass_list_conversations(
@@ -299,6 +327,7 @@ async def break_glass_list_conversations(
     admin_user_id: uuid.UUID,
     student_id: uuid.UUID,
     reason: str,
+    request: Request | None = None,
 ) -> BreakGlassConversationList:
     """List a student's conversations for crisis review. Audit-logged."""
     result = await db.execute(
@@ -311,7 +340,10 @@ async def break_glass_list_conversations(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
     student, student_user = row
 
-    await _log_break_glass(db, admin_user_id, "student", student_id, reason)
+    await _log_break_glass(
+        db, admin_user_id, "student", student_id, reason,
+        tenant_id=student_user.tenant_id, request=request,
+    )
 
     conv_result = await db.execute(
         select(Conversation)
@@ -332,15 +364,27 @@ async def break_glass_get_messages(
     admin_user_id: uuid.UUID,
     conversation_id: uuid.UUID,
     reason: str,
+    request: Request | None = None,
 ) -> BreakGlassMessageList:
     """Read a conversation transcript for crisis review. Audit-logged."""
+    # Conversations carry no tenant of their own, so the school scope for the
+    # audit row is resolved through the student who owns it -- the event
+    # belongs to that student's school, not to the platform admin's.
     conv_result = await db.execute(
-        select(Conversation).where(Conversation.conversation_id == conversation_id)
+        select(Conversation, User.tenant_id)
+        .join(StudentProfile, Conversation.student_id == StudentProfile.student_id)
+        .join(User, StudentProfile.user_id == User.user_id)
+        .where(Conversation.conversation_id == conversation_id)
     )
-    if not conv_result.scalar_one_or_none():
+    conv_row = conv_result.one_or_none()
+    if conv_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    _conversation, subject_tenant_id = conv_row
 
-    await _log_break_glass(db, admin_user_id, "conversation", conversation_id, reason)
+    await _log_break_glass(
+        db, admin_user_id, "conversation", conversation_id, reason,
+        tenant_id=subject_tenant_id, request=request,
+    )
 
     msg_result = await db.execute(
         select(Message)
@@ -399,7 +443,7 @@ async def create_staff_user(
     await _create_role_profile(db, user)
 
     await log_audit(
-        db, user_id=actor_id, action="user.create",
+        db, user_id=actor_id, action=AuditAction.USER_CREATED,
         entity_type="user", entity_id=user.user_id,
         details={"email": user.email, "role": user.role},
         request=request,
@@ -483,10 +527,13 @@ async def update_user_admin(
         if not payload.is_active:
             await _ensure_not_last_active_admin(db, user, actor_id)
         user.is_active = payload.is_active
-        actions.append("user.activate" if payload.is_active else "user.suspend")
+        actions.append(
+            AuditAction.USER_REACTIVATED if payload.is_active
+            else AuditAction.USER_DEACTIVATED
+        )
     if payload.new_password:
         user.password_hash = hash_password(payload.new_password)
-        actions.append("user.reset_password")
+        actions.append(AuditAction.PASSWORD_RESET_BY_ADMIN)
     profile_changed = False
     for field in ("first_name", "last_name", "phone"):
         value = getattr(payload, field)
@@ -494,16 +541,28 @@ async def update_user_admin(
             setattr(user, field, value)
             profile_changed = True
     if profile_changed:
-        actions.append("user.update")
+        actions.append(AuditAction.USER_UPDATED)
 
     await db.flush()
     await db.refresh(user)
     for action in actions:
         await log_audit(
             db, user_id=actor_id, action=action,
-            entity_type="user", entity_id=user.user_id,
+            entity_type=AuditEntity.USER, entity_id=user.user_id,
+            # The new password is of course never recorded -- only that one
+            # was set, and by whom.
             details={"email": user.email, "role": user.role},
-            request=request,
+            request=request, actor_role="admin",
+            # The subject's school, not the acting platform admin's.
+            tenant_id=user.tenant_id,
+            severity=(
+                AuditSeverity.WARNING
+                if action in (
+                    AuditAction.USER_DEACTIVATED,
+                    AuditAction.PASSWORD_RESET_BY_ADMIN,
+                )
+                else AuditSeverity.NOTICE
+            ),
         )
     return StaffUserResponse.model_validate(user)
 
@@ -592,10 +651,11 @@ async def soft_delete_user(
     user.deleted_at = datetime.now(timezone.utc)
     await db.flush()
     await log_audit(
-        db, user_id=actor_id, action="user.delete",
-        entity_type="user", entity_id=user.user_id,
-        details={"email": user.email, "role": user.role},
-        request=request,
+        db, user_id=actor_id, action=AuditAction.USER_DEACTIVATED,
+        entity_type=AuditEntity.USER, entity_id=user.user_id,
+        details={"email": user.email, "role": user.role, "soft_delete": True},
+        request=request, actor_role="admin", tenant_id=user.tenant_id,
+        severity=AuditSeverity.WARNING,
     )
 
 
@@ -617,10 +677,11 @@ async def delete_tenant(
     tenant.status = "archived"
     await db.flush()
     await log_audit(
-        db, user_id=actor_id, action="tenant.archive",
-        entity_type="tenant", entity_id=tenant.tenant_id,
+        db, user_id=actor_id, action=AuditAction.SCHOOL_ARCHIVED,
+        entity_type=AuditEntity.TENANT, entity_id=tenant.tenant_id,
         details={"tenant_name": tenant.tenant_name},
-        request=request,
+        request=request, actor_role="admin", tenant_id=tenant.tenant_id,
+        severity=AuditSeverity.WARNING,
     )
 
 
@@ -666,7 +727,12 @@ def _counselor_to_admin_response(
     )
 
 
-async def create_counselor(db: AsyncSession, payload: CounselorCreate) -> CounselorAdminResponse:
+async def create_counselor(
+    db: AsyncSession,
+    payload: CounselorCreate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> CounselorAdminResponse:
     """Register a platform counselor (user under the platform tenant + profile)."""
     from app.auth.utils import hash_password
 
@@ -707,6 +773,13 @@ async def create_counselor(db: AsyncSession, payload: CounselorCreate) -> Counse
     )
     db.add(counselor)
     await db.flush()
+    await log_audit(
+        db, user_id=actor_id, action=AuditAction.COUNSELOR_REGISTERED,
+        entity_type=AuditEntity.COUNSELOR, entity_id=counselor.counselor_id,
+        details={"email": user.email, "is_verified": counselor.is_verified},
+        request=request, actor_role="admin", tenant_id=user.tenant_id,
+        severity=AuditSeverity.NOTICE,
+    )
     return _counselor_to_admin_response(counselor, user)
 
 
@@ -723,7 +796,11 @@ async def list_counselors(db: AsyncSession) -> CounselorListResponse:
 
 
 async def update_counselor(
-    db: AsyncSession, counselor_id: uuid.UUID, payload: CounselorAdminUpdate
+    db: AsyncSession,
+    counselor_id: uuid.UUID,
+    payload: CounselorAdminUpdate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> CounselorAdminResponse:
     """Edit a counselor's profile, verification, availability, or active status."""
     result = await db.execute(
@@ -745,6 +822,28 @@ async def update_counselor(
     await db.flush()
     await db.refresh(counselor)
     await db.refresh(user)
+    # Verification is what puts a counselor in front of students in the public
+    # booking directory, so a change to it is called out separately from an
+    # ordinary profile edit rather than being flattened into "updated".
+    verification_changed = "is_verified" in data
+    await log_audit(
+        db,
+        user_id=actor_id,
+        action=(
+            AuditAction.COUNSELOR_VERIFIED if verification_changed
+            else AuditAction.USER_UPDATED
+        ),
+        entity_type=AuditEntity.COUNSELOR,
+        entity_id=counselor.counselor_id,
+        details={
+            "changed": sorted(data.keys()),
+            **({"is_verified": counselor.is_verified} if verification_changed else {}),
+        },
+        request=request, actor_role="admin", tenant_id=user.tenant_id,
+        severity=(
+            AuditSeverity.WARNING if verification_changed else AuditSeverity.NOTICE
+        ),
+    )
     return _counselor_to_admin_response(counselor, user)
 
 
@@ -760,7 +859,11 @@ async def list_ai_routes(db: AsyncSession) -> AIRouteListResponse:
 
 
 async def update_ai_route(
-    db: AsyncSession, feature_name: str, payload: AIRouteUpdate
+    db: AsyncSession,
+    feature_name: str,
+    payload: AIRouteUpdate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> AIRouteResponse:
     """Update the model routing for a feature (primary/fallback provider + model)."""
     result = await db.execute(
@@ -775,6 +878,18 @@ async def update_ai_route(
 
     await db.flush()
     await db.refresh(route)
+    # Which model answers a given feature changes what every student is told.
+    await log_audit(
+        db, user_id=actor_id, action=AuditAction.COMRADE_CONFIGURATION_CHANGED,
+        entity_type=AuditEntity.CONFIG, entity_id=None,
+        details={
+            "feature_name": feature_name,
+            "primary_provider": route.primary_provider,
+            "primary_model": route.primary_model,
+        },
+        request=request, actor_role="admin",
+        severity=AuditSeverity.CRITICAL,
+    )
     return AIRouteResponse.model_validate(route)
 
 
@@ -833,7 +948,12 @@ async def get_platform_analytics(db: AsyncSession) -> PlatformAnalytics:
 # AI Playground
 # -------------------------------------------------------------------
 
-async def activate_prompt(db: AsyncSession, prompt_id: uuid.UUID) -> PromptResponse:
+async def activate_prompt(
+    db: AsyncSession,
+    prompt_id: uuid.UUID,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> PromptResponse:
     """Activate one prompt version and deactivate all other versions of the same prompt."""
     result = await db.execute(
         select(AIPromptVersion).where(AIPromptVersion.prompt_id == prompt_id)
@@ -850,6 +970,20 @@ async def activate_prompt(db: AsyncSession, prompt_id: uuid.UUID) -> PromptRespo
 
     await db.flush()
     await db.refresh(prompt)
+    # Activating a prompt version changes Comrade's instructions for every
+    # student on the platform at once. The prompt *text* is not recorded --
+    # it is versioned in ai_prompt_versions and named here by id.
+    await log_audit(
+        db, user_id=actor_id, action=AuditAction.COMRADE_CONFIGURATION_CHANGED,
+        entity_type=AuditEntity.CONFIG, entity_id=prompt.prompt_id,
+        details={
+            "prompt_name": prompt.prompt_name,
+            "version": prompt.version,
+            "change": "prompt_activated",
+        },
+        request=request, actor_role="admin",
+        severity=AuditSeverity.CRITICAL,
+    )
     return PromptResponse.model_validate(prompt)
 
 
@@ -957,12 +1091,24 @@ async def run_playground(db: AsyncSession, payload: PlaygroundRequest) -> list[P
 # -------------------------------------------------------------------
 
 def _audit_log_filters(
-    user_id: uuid.UUID | None,
-    action: str | None,
-    date_from: datetime | None,
-    date_to: datetime | None,
+    user_id=None,
+    action=None,
+    date_from=None,
+    date_to=None,
+    tenant_id=None,
+    actor_role=None,
+    entity_type=None,
+    result=None,
+    severity=None,
+    request_id=None,
 ) -> list:
-    """Shared WHERE clauses for audit-log listing and export."""
+    """
+    Shared WHERE clauses for audit-log listing and export.
+
+    Listing and export must filter identically -- an export that quietly
+    covered a different set than the screen it was taken from would be worse
+    than no export at all.
+    """
     filters = []
     if user_id is not None:
         filters.append(AuditLog.user_id == user_id)
@@ -972,15 +1118,33 @@ def _audit_log_filters(
         filters.append(AuditLog.created_at >= date_from)
     if date_to is not None:
         filters.append(AuditLog.created_at <= date_to)
+    if tenant_id is not None:
+        filters.append(AuditLog.tenant_id == tenant_id)
+    if actor_role:
+        filters.append(AuditLog.actor_role == actor_role)
+    if entity_type:
+        filters.append(AuditLog.entity_type == entity_type)
+    if result:
+        filters.append(AuditLog.result == result)
+    if severity:
+        filters.append(AuditLog.severity == severity)
+    if request_id:
+        filters.append(AuditLog.request_id == request_id)
     return filters
 
 
-def _audit_row_to_response(log: AuditLog, user: User | None) -> AuditLogResponse:
+def _audit_row_to_response(
+    log: AuditLog, user: User | None, school_name: str | None = None
+) -> AuditLogResponse:
     return AuditLogResponse(
         audit_id=log.audit_id,
         user_id=log.user_id,
         user_name=f"{user.first_name} {user.last_name}" if user else None,
-        user_role=user.role if user else None,
+        # Prefer the role recorded on the event. Falling back to the user's
+        # current role keeps pre-018 rows readable, but the stored value wins:
+        # it is what the actor was at the time, which is the question a reader
+        # of an audit trail is actually asking.
+        user_role=log.actor_role or (user.role if user else None),
         action=log.action,
         entity_type=log.entity_type,
         entity_id=log.entity_id,
@@ -988,6 +1152,20 @@ def _audit_row_to_response(log: AuditLog, user: User | None) -> AuditLogResponse
         user_agent=log.user_agent,
         details=log.details,
         created_at=log.created_at,
+        tenant_id=log.tenant_id,
+        school_name=school_name,
+        result=log.result,
+        severity=log.severity,
+        request_id=log.request_id,
+    )
+
+
+def _audit_select():
+    """Audit rows joined to actor and school, both optional."""
+    return (
+        select(AuditLog, User, Tenant.tenant_name)
+        .outerjoin(User, AuditLog.user_id == User.user_id)
+        .outerjoin(Tenant, AuditLog.tenant_id == Tenant.tenant_id)
     )
 
 
@@ -999,70 +1177,138 @@ async def list_audit_logs(
     action: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    tenant_id: uuid.UUID | None = None,
+    actor_role: str | None = None,
+    entity_type: str | None = None,
+    result: str | None = None,
+    severity: str | None = None,
+    request_id: str | None = None,
 ) -> tuple[list[AuditLogResponse], int]:
-    """List audit logs with optional filters (admin only)."""
-    filters = _audit_log_filters(user_id, action, date_from, date_to)
+    """List audit logs with optional filters (platform admin only).
+
+    Filtering and pagination are both server-side: the table is append-only
+    and grows without bound, so a client that fetched everything and filtered
+    in the browser would eventually be asking for the whole history.
+    """
+    filters = _audit_log_filters(
+        user_id, action, date_from, date_to, tenant_id,
+        actor_role, entity_type, result, severity, request_id,
+    )
 
     count_result = await db.execute(
         select(func.count()).select_from(AuditLog).where(*filters)
     )
     total = count_result.scalar() or 0
 
-    result = await db.execute(
-        select(AuditLog, User)
-        .outerjoin(User, AuditLog.user_id == User.user_id)
+    rows = await db.execute(
+        _audit_select()
         .where(*filters)
-        .order_by(AuditLog.created_at.desc())
+        # audit_id breaks ties: created_at alone is not unique, and without a
+        # deterministic order two pages can repeat or skip a row.
+        .order_by(AuditLog.created_at.desc(), AuditLog.audit_id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
 
-    return [_audit_row_to_response(log, user) for log, user in result.all()], total
+    return [
+        _audit_row_to_response(log, user, school_name)
+        for log, user, school_name in rows.all()
+    ], total
 
 
+# An export is a bounded operation, not a database dump.
 AUDIT_EXPORT_MAX_ROWS = 10_000
 
+# Rows per round trip while streaming, so peak memory stays flat in the size
+# of the export rather than proportional to it.
+_AUDIT_EXPORT_CHUNK = 500
 
-async def export_audit_logs_csv(
-    db: AsyncSession,
+AUDIT_EXPORT_COLUMNS = [
+    "timestamp", "request_id", "severity", "result", "user_id", "user_name",
+    "role", "school", "action", "entity_type", "entity_id", "ip_address",
+    "user_agent", "details",
+]
+
+
+async def iter_audit_logs_csv(
     user_id: uuid.UUID | None = None,
     action: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-) -> str:
-    """Render filtered audit logs as CSV text (capped at AUDIT_EXPORT_MAX_ROWS)."""
+    tenant_id: uuid.UUID | None = None,
+    actor_role: str | None = None,
+    entity_type: str | None = None,
+    result: str | None = None,
+    severity: str | None = None,
+    request_id: str | None = None,
+):
+    """
+    Yield the filtered audit log as CSV text, a chunk at a time.
+
+    Streamed rather than assembled in memory: the previous version built every
+    matching row and its serialised details into one string before sending a
+    byte, so a wide date range was a memory spike proportional to the export.
+
+    Opens its **own** session rather than borrowing the request's. FastAPI
+    closes `yield` dependencies before the response body is streamed, so a
+    generator holding the request's session would be reading from a closed one
+    by the time it ran. It also keeps a long export off the request's
+    transaction, which has already been committed by the caller.
+
+    Emits the same columns the on-screen table shows, plus the correlation id.
+    There is no field here that the admin API does not already return, and
+    `details` was scrubbed on the way into the table, not on the way out.
+    """
     import csv
-    import io
+    import io as _io
     import json
 
-    result = await db.execute(
-        select(AuditLog, User)
-        .outerjoin(User, AuditLog.user_id == User.user_id)
-        .where(*_audit_log_filters(user_id, action, date_from, date_to))
-        .order_by(AuditLog.created_at.desc())
-        .limit(AUDIT_EXPORT_MAX_ROWS)
+    from database.session import async_session_factory
+
+    filters = _audit_log_filters(
+        user_id, action, date_from, date_to, tenant_id,
+        actor_role, entity_type, result, severity, request_id,
     )
 
-    buffer = io.StringIO()
+    buffer = _io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow([
-        "timestamp", "user_id", "user_name", "role", "action",
-        "entity_type", "entity_id", "ip_address", "user_agent", "details",
-    ])
-    for log, user in result.all():
-        writer.writerow([
-            log.created_at.isoformat(),
-            str(log.user_id) if log.user_id else "",
-            f"{user.first_name} {user.last_name}" if user else "",
-            user.role if user else "",
-            log.action,
-            log.entity_type or "",
-            str(log.entity_id) if log.entity_id else "",
-            log.ip_address or "",
-            log.user_agent or "",
-            json.dumps(log.details) if log.details else "",
-        ])
-    return buffer.getvalue()
+
+    def _drain() -> str:
+        text = buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        return text
+
+    writer.writerow(AUDIT_EXPORT_COLUMNS)
+    yield _drain()
+
+    async with async_session_factory() as db:
+        stream = await db.stream(
+            _audit_select()
+            .where(*filters)
+            .order_by(AuditLog.created_at.desc(), AuditLog.audit_id.desc())
+            .limit(AUDIT_EXPORT_MAX_ROWS)
+        )
+
+        async for chunk in stream.partitions(_AUDIT_EXPORT_CHUNK):
+            for log, user, school_name in chunk:
+                writer.writerow([
+                    log.created_at.isoformat(),
+                    log.request_id or "",
+                    log.severity,
+                    log.result,
+                    str(log.user_id) if log.user_id else "",
+                    f"{user.first_name} {user.last_name}" if user else "",
+                    log.actor_role or (user.role if user else ""),
+                    school_name or "",
+                    log.action,
+                    log.entity_type or "",
+                    str(log.entity_id) if log.entity_id else "",
+                    log.ip_address or "",
+                    log.user_agent or "",
+                    json.dumps(log.details) if log.details else "",
+                ])
+            yield _drain()
 
 
 # -------------------------------------------------------------------
@@ -1107,7 +1353,11 @@ async def get_platform_config(db: AsyncSession, config_key: str) -> PlatformConf
 
 
 async def update_platform_config(
-    db: AsyncSession, config_key: str, payload: PlatformConfigUpdate, admin_user_id: uuid.UUID
+    db: AsyncSession,
+    config_key: str,
+    payload: PlatformConfigUpdate,
+    admin_user_id: uuid.UUID,
+    request: Request | None = None,
 ) -> PlatformConfigResponse:
     """Upsert a config value (known keys only). Audit-logged."""
     from app.intelligence.config import DEFAULTS, load_config
@@ -1140,12 +1390,30 @@ async def update_platform_config(
     else:
         row.config_value = payload.config_value
 
-    db.add(AuditLog(
+    # Which key changed is the whole point of the record -- "a config changed"
+    # with no indication of which one is not an audit trail. The value itself
+    # is deliberately not stored: safety_floors is small and safe, but this
+    # endpoint takes arbitrary JSON and the audit table is the wrong place to
+    # accumulate whatever a future key holds.
+    await log_audit(
+        db,
         user_id=admin_user_id,
-        action="platform_config_update",
-        entity_type="platform_config",
-    ))
-    await db.flush()
+        action=(
+            AuditAction.SAFETY_THRESHOLD_CHANGED
+            if config_key == "safety_floors"
+            else AuditAction.SETTINGS_CHANGED
+        ),
+        entity_type=AuditEntity.CONFIG,
+        details={"config_key": config_key, "keys_set": sorted(payload.config_value.keys())},
+        request=request,
+        actor_role="admin",
+        # Safety thresholds decide when a student is escalated to a human.
+        severity=(
+            AuditSeverity.CRITICAL
+            if config_key == "safety_floors"
+            else AuditSeverity.NOTICE
+        ),
+    )
 
     return PlatformConfigResponse(
         config_key=config_key,

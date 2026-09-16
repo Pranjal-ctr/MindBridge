@@ -135,3 +135,35 @@ No secret is committed. `.env` is gitignored; `.env.example` and
 `.env.docker.example` are templates with placeholder values only.
 `docker-compose.yml` requires `POSTGRES_PASSWORD` to be supplied — it has no
 default, so the stack refuses to start rather than running on a known password.
+
+---
+
+## Audit logging
+
+Full reference: **[`docs/audit-logging.md`](audit-logging.md)**. The operational
+points that matter for a deployment:
+
+- **Append-only is enforced by a Postgres trigger**, installed by migration 018
+  and by an `after_create` hook on the model so it exists under `create_all`
+  too. `UPDATE`, `DELETE` and `TRUNCATE` on `audit_logs` all raise.
+- **Optional hardening:** if the deployment separates the migration role from
+  the runtime role, restrict the runtime role to `INSERT, SELECT` on
+  `audit_logs`. Not applied automatically — it needs two roles, which is a
+  deployment decision.
+- **Access is platform-admin only**, enforced server-side. School admins have
+  no audit access; the tenant scoping exists and is tested if that changes.
+- **Reads and exports are themselves audited.** Expect `admin.audit_log_viewed`
+  volume proportional to how often the page is opened.
+- **Correlation:** every audit row carries the same `request_id` as the
+  structured logs and the Sentry event for that request. This is the join key
+  during an incident.
+- **No queue or broker** was introduced. Audit writes are single inserts at the
+  service boundary; auth events use a short-lived second connection so an audit
+  failure can never lock users out.
+
+> ⚠️ **Retention is an open legal/product decision.** No automatic deletion is
+> implemented and none should be added until a period is agreed — see
+> [Retention](audit-logging.md#retention). This sits alongside the other open
+> DPDP questions recorded in `app/consent/policy.py`.
+
+---

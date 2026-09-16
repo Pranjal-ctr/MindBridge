@@ -102,6 +102,7 @@ async def login(
 )
 async def google_auth(
     payload: GoogleAuthRequest,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -111,7 +112,7 @@ async def google_auth(
     registration_required result carrying a short-lived registration token for
     new users, who then call /auth/google/complete with mobile + institution code.
     """
-    return await google_authenticate(db, payload.id_token)
+    return await google_authenticate(db, payload.id_token, request=request)
 
 
 @router.post(
@@ -159,6 +160,7 @@ async def refresh_token(
 @router.post("/logout")
 async def logout_endpoint(
     payload: LogoutRequest,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -170,7 +172,9 @@ async def logout_endpoint(
     revoking. Always reports success: a student on a shared machine who is
     told "logout failed" has no next move.
     """
-    return await logout(db, payload.refresh_token, all_devices=payload.all_devices)
+    return await logout(
+        db, payload.refresh_token, all_devices=payload.all_devices, request=request
+    )
 
 
 @router.post("/verify", dependencies=[Depends(rate_limit("verify", 20))])

@@ -7,10 +7,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import log_audit
+from app.audit_actions import (
+    RISK_REVIEW_PREFIX,
+    AuditAction,
+    AuditEntity,
+    AuditSeverity,
+)
 from app.risk.schemas import (
     RiskAlertResponse,
     RiskAssessmentCreate,
@@ -18,7 +25,7 @@ from app.risk.schemas import (
     RiskQueueItem,
     RiskReviewUpdate,
 )
-from database.models import AuditLog, RiskAssessment, StudentProfile, User
+from database.models import RiskAssessment, StudentProfile, User
 
 
 async def create_risk_assessment(
@@ -164,6 +171,8 @@ async def review_risk_assessment(
     tenant_id: uuid.UUID,
     reviewer_user_id: uuid.UUID,
     payload: RiskReviewUpdate,
+    reviewer_role: str | None = None,
+    request: Request | None = None,
 ) -> RiskAssessmentResponse:
     """Acknowledge or resolve a queued assessment (tenant-scoped, audit-logged)."""
     result = await db.execute(
@@ -194,19 +203,28 @@ async def review_risk_assessment(
     if payload.note is not None:
         assessment.resolution_note = payload.note
 
-    db.add(AuditLog(
+    await log_audit(
+        db,
         user_id=reviewer_user_id,
-        action=f"risk_review:{payload.review_status}",
-        entity_type="risk_assessment",
+        # Keeps the historical `risk_review:<status>` string -- rows already
+        # exist with it and the queue UI filters on the prefix.
+        action=f"{RISK_REVIEW_PREFIX}{payload.review_status}",
+        entity_type=AuditEntity.RISK_ASSESSMENT,
         entity_id=risk_id,
         # Structured trail for the evaluation dataset (AI vs. human).
+        # Levels and verdicts only -- `payload.note` is a counselor's clinical
+        # note and is deliberately not copied here. It is already stored on the
+        # assessment, behind the RBAC that governs clinical data.
         details={
             "ai_risk_level": assessment.risk_level,
             "counselor_risk_level": payload.counselor_risk_level,
             "verdict": payload.verdict,
             "outcome": payload.outcome,
         },
-    ))
-    await db.flush()
+        request=request,
+        actor_role=reviewer_role,
+        tenant_id=tenant_id,
+        severity=AuditSeverity.NOTICE,
+    )
     await db.refresh(assessment)
     return RiskAssessmentResponse.model_validate(assessment)

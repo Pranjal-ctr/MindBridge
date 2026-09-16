@@ -403,6 +403,8 @@ class AuditLogResponse(BaseModel):
     audit_id: uuid.UUID
     user_id: uuid.UUID | None = None
     user_name: str | None = None
+    # The actor's role recorded *on the event*, falling back to the user's
+    # current role for rows written before actor_role existed.
     user_role: str | None = None
     action: str
     entity_type: str | None = None
@@ -411,6 +413,13 @@ class AuditLogResponse(BaseModel):
     user_agent: str | None = None
     details: dict | None = None
     created_at: datetime
+
+    # --- added with migration 018 ---
+    tenant_id: uuid.UUID | None = None
+    school_name: str | None = None
+    result: str = "success"
+    severity: str = "info"
+    request_id: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -5,10 +5,11 @@ Kio Admin Router
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import require_role
@@ -47,6 +48,8 @@ from app.admin.schemas import (
     TenantUpdate,
     UserAdminUpdate,
 )
+from app.audit import log_audit
+from app.audit_actions import AuditAction, AuditEntity, AuditSeverity
 from app.admin.service import (
     activate_prompt,
     get_admin_risk_detail,
@@ -58,7 +61,8 @@ from app.admin.service import (
     create_staff_user,
     create_tenant,
     delete_tenant,
-    export_audit_logs_csv,
+    AUDIT_EXPORT_MAX_ROWS,
+    iter_audit_logs_csv,
     get_platform_analytics,
     get_platform_config,
     get_tenant_detail,
@@ -202,6 +206,7 @@ async def create_tenant_subscription(
 async def break_glass_conversations(
     student_id: uuid.UUID,
     admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     reason: str = Query(..., min_length=10, max_length=500,
                         description="Why this access is needed (recorded in the audit log)"),
@@ -210,7 +215,9 @@ async def break_glass_conversations(
     BREAK-GLASS: list a student's private conversations for crisis review.
     Platform admin only. Every call is audit-logged with the stated reason.
     """
-    return await break_glass_list_conversations(db, admin_user.user_id, student_id, reason)
+    return await break_glass_list_conversations(
+        db, admin_user.user_id, student_id, reason, request=request
+    )
 
 
 @router.get(
@@ -220,6 +227,7 @@ async def break_glass_conversations(
 async def break_glass_messages(
     conversation_id: uuid.UUID,
     admin_user: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     reason: str = Query(..., min_length=10, max_length=500,
                         description="Why this access is needed (recorded in the audit log)"),
@@ -228,7 +236,9 @@ async def break_glass_messages(
     BREAK-GLASS: read a student conversation transcript for crisis review.
     Platform admin only. Every call is audit-logged with the stated reason.
     """
-    return await break_glass_get_messages(db, admin_user.user_id, conversation_id, reason)
+    return await break_glass_get_messages(
+        db, admin_user.user_id, conversation_id, reason, request=request
+    )
 
 
 @router.delete(
@@ -341,10 +351,12 @@ async def get_counselors(db: Annotated[AsyncSession, Depends(get_db)]):
 )
 async def register_counselor(
     payload: CounselorCreate,
+    admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Register a platform counselor. Platform admin only."""
-    return await create_counselor(db, payload)
+    return await create_counselor(db, payload, actor_id=admin.user_id, request=request)
 
 
 @router.patch(
@@ -355,10 +367,14 @@ async def register_counselor(
 async def edit_counselor(
     counselor_id: uuid.UUID,
     payload: CounselorAdminUpdate,
+    admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Edit a counselor: profile, verify credentials, activate/deactivate, availability."""
-    return await update_counselor(db, counselor_id, payload)
+    return await update_counselor(
+        db, counselor_id, payload, actor_id=admin.user_id, request=request
+    )
 
 
 # -------------------------------------------------------------------
@@ -383,10 +399,14 @@ async def get_ai_routes(db: Annotated[AsyncSession, Depends(get_db)]):
 async def patch_ai_route(
     feature_name: str,
     payload: AIRouteUpdate,
+    admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Change the model routing for an AI feature (primary/fallback provider + model)."""
-    return await update_ai_route(db, feature_name, payload)
+    return await update_ai_route(
+        db, feature_name, payload, actor_id=admin.user_id, request=request
+    )
 
 
 # -------------------------------------------------------------------
@@ -443,10 +463,12 @@ async def create_new_prompt(
 )
 async def activate_prompt_version(
     prompt_id: uuid.UUID,
+    admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Activate a prompt version globally; deactivates other versions of the same prompt."""
-    return await activate_prompt(db, prompt_id)
+    return await activate_prompt(db, prompt_id, actor_id=admin.user_id, request=request)
 
 
 @router.get(
@@ -513,10 +535,13 @@ async def put_platform_config(
     config_key: str,
     payload: PlatformConfigUpdate,
     admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Update a config value (wellness weights, risk bands, crisis thresholds, ...)."""
-    return await update_platform_config(db, config_key, payload, admin.user_id)
+    return await update_platform_config(
+        db, config_key, payload, admin.user_id, request=request
+    )
 
 
 # -------------------------------------------------------------------
@@ -526,9 +551,10 @@ async def put_platform_config(
 @router.get(
     "/audit-logs",
     response_model=AuditLogListResponse,
-    dependencies=[Depends(require_role("admin"))],
 )
 async def get_audit_logs(
+    admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -536,35 +562,116 @@ async def get_audit_logs(
     action: str | None = Query(None, max_length=100, description="Action prefix match"),
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
+    tenant_id: uuid.UUID | None = Query(None, description="School scope"),
+    actor_role: str | None = Query(None, max_length=50),
+    entity_type: str | None = Query(None, max_length=50),
+    result: str | None = Query(None, max_length=20),
+    severity: str | None = Query(None, max_length=20),
+    request_id: str | None = Query(
+        None, max_length=64,
+        description="Correlation id -- joins this event to its application logs",
+    ),
 ):
-    """View audit trail with optional filters. Platform admin only."""
+    """View the audit trail. Platform admin only.
+
+    Reading the audit trail is itself audited. Someone who can see every
+    sensitive action on the platform is exercising real power, and a log that
+    does not record its own readers has a hole exactly where it matters.
+    """
     logs, total = await list_audit_logs(
         db, page, page_size,
         user_id=user_id, action=action, date_from=date_from, date_to=date_to,
+        tenant_id=tenant_id, actor_role=actor_role, entity_type=entity_type,
+        result=result, severity=severity, request_id=request_id,
+    )
+    await log_audit(
+        db,
+        user_id=admin.user_id,
+        action=AuditAction.AUDIT_LOG_VIEWED,
+        entity_type=AuditEntity.AUDIT_LOG,
+        # The filters, not the rows. This says what was looked for without
+        # copying the results back into the table and doubling it every read.
+        details={
+            "page": page,
+            "page_size": page_size,
+            "result_count": len(logs),
+            "filters": {
+                k: str(v) for k, v in {
+                    "user_id": user_id, "action": action,
+                    "date_from": date_from, "date_to": date_to,
+                    "tenant_id": tenant_id, "actor_role": actor_role,
+                    "entity_type": entity_type, "result": result,
+                    "severity": severity, "request_id": request_id,
+                }.items() if v is not None
+            },
+        },
+        request=request,
+        actor=admin,
+        severity=AuditSeverity.NOTICE,
     )
     return AuditLogListResponse(logs=logs, total=total)
 
 
-@router.get(
-    "/audit-logs/export",
-    dependencies=[Depends(require_role("admin"))],
-)
+@router.get("/audit-logs/export")
 async def export_audit_logs(
+    admin: AdminUser,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     user_id: uuid.UUID | None = Query(None),
     action: str | None = Query(None, max_length=100, description="Action prefix match"),
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
+    tenant_id: uuid.UUID | None = Query(None, description="School scope"),
+    actor_role: str | None = Query(None, max_length=50),
+    entity_type: str | None = Query(None, max_length=50),
+    result: str | None = Query(None, max_length=20),
+    severity: str | None = Query(None, max_length=20),
+    request_id: str | None = Query(None, max_length=64),
 ):
-    """Export filtered audit logs as CSV. Platform admin only."""
-    csv_text = await export_audit_logs_csv(
-        db, user_id=user_id, action=action, date_from=date_from, date_to=date_to
+    """Export the filtered audit log as CSV. Platform admin only.
+
+    Read-only, and capped at AUDIT_EXPORT_MAX_ROWS. The export event is
+    written and committed *before* a single byte is streamed: the response
+    body is produced lazily after the endpoint returns, so a row written
+    alongside it would be committed only if the download completed. Taking a
+    copy of the audit trail off the platform is precisely the act that must be
+    recorded whether or not it finished.
+    """
+    filters = dict(
+        user_id=user_id, action=action, date_from=date_from, date_to=date_to,
+        tenant_id=tenant_id, actor_role=actor_role, entity_type=entity_type,
+        result=result, severity=severity, request_id=request_id,
     )
-    filename = f"kio-audit-logs-{datetime.utcnow().date().isoformat()}.csv"
-    return Response(
-        content=csv_text,
+
+    await log_audit(
+        db,
+        user_id=admin.user_id,
+        action=AuditAction.AUDIT_LOG_EXPORTED,
+        entity_type=AuditEntity.AUDIT_LOG,
+        details={
+            "max_rows": AUDIT_EXPORT_MAX_ROWS,
+            "filters": {k: str(v) for k, v in filters.items() if v is not None},
+        },
+        request=request,
+        actor=admin,
+        # An export leaves the platform and cannot be recalled.
+        severity=AuditSeverity.WARNING,
+    )
+    await db.commit()
+
+    filename = (
+        "kio-audit-logs-"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}Z.csv"
+    )
+    return StreamingResponse(
+        # No `db`: the generator opens its own session, because FastAPI has
+        # already closed this one by the time the body streams.
+        iter_audit_logs_csv(**filters),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Max-Rows": str(AUDIT_EXPORT_MAX_ROWS),
+        },
     )
 
 

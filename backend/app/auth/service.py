@@ -15,6 +15,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import log_audit, log_audit_detached
+from app.audit_actions import (
+    AuditAction,
+    AuditEntity,
+    AuditResult,
+    AuditSeverity,
+)
 from app.auth.schemas import SignupRequest, TokenResponse
 from app.auth.utils import (
     create_access_token,
@@ -133,6 +140,26 @@ async def register_user(
     # 9. Generate tokens
     tokens = await _generate_tokens(db, user, request=request)
 
+    # Role and school are the load-bearing facts here: this is the record of
+    # an account coming into existence with a given level of access. The
+    # guardian-consent state is included because for a 13-17 signup it is the
+    # difference between an active account and one awaiting approval.
+    await log_audit(
+        db,
+        user_id=user.user_id,
+        action=AuditAction.SIGNUP,
+        entity_type=AuditEntity.USER,
+        entity_id=user.user_id,
+        details={
+            "role": user.role,
+            "guardian_consent_status": user.guardian_consent_status,
+            "self_signup": True,
+        },
+        request=request,
+        actor=user,
+        severity=AuditSeverity.NOTICE,
+    )
+
     return user, tokens
 
 
@@ -216,6 +243,15 @@ async def verify_email(db: AsyncSession, token: str) -> None:
 
     user.is_verified = True
     await db.flush()
+    await log_audit(
+        db,
+        user_id=user.user_id,
+        action=AuditAction.EMAIL_VERIFIED,
+        entity_type=AuditEntity.USER,
+        entity_id=user.user_id,
+        actor=user,
+        severity=AuditSeverity.INFO,
+    )
 
 
 async def resend_verification(
@@ -274,6 +310,21 @@ async def request_password_reset(
     else:
         await try_send(**message)
 
+    # Only the branch that really sent a link is audited. The early return
+    # above is anti-enumeration by design; writing a row for an address with
+    # no account would accumulate exactly the list this endpoint refuses to
+    # confirm. The reset token itself is never recorded -- it is a password
+    # equivalent for as long as it is valid.
+    await log_audit(
+        db,
+        user_id=user.user_id,
+        action=AuditAction.PASSWORD_RESET_REQUESTED,
+        entity_type=AuditEntity.USER,
+        entity_id=user.user_id,
+        actor=user,
+        severity=AuditSeverity.NOTICE,
+    )
+
 
 async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:
     """Consume a reset token and set a new password."""
@@ -298,6 +349,15 @@ async def reset_password(db: AsyncSession, token: str, new_password: str) -> Non
     user.password_hash = hash_password(new_password)
     # A completed reset proves control of the inbox.
     user.is_verified = True
+    await log_audit(
+        db,
+        user_id=user.user_id,
+        action=AuditAction.PASSWORD_RESET_COMPLETED,
+        entity_type=AuditEntity.USER,
+        entity_id=user.user_id,
+        actor=user,
+        severity=AuditSeverity.NOTICE,
+    )
     await db.flush()
 
 
@@ -336,13 +396,48 @@ async def authenticate_user(
     result = await db.execute(select(User).where(User.email == email.lower()))
     user = result.scalar_one_or_none()
 
+    # Every failure path below raises, which rolls back this session -- so a
+    # failed-login row added to it would vanish exactly when it matters most.
+    # log_audit_detached() commits in its own session, and swallows its own
+    # errors: an audit problem must never be the reason nobody can sign in.
+    #
+    # The attempted email is recorded because a failed-login trail that does
+    # not say which account was targeted cannot show credential stuffing. The
+    # submitted password is of course never touched.
     if user is None or not verify_password(password, user.password_hash):
+        await log_audit_detached(
+            user_id=user.user_id if user else None,
+            action=AuditAction.LOGIN_FAILED,
+            entity_type=AuditEntity.USER,
+            entity_id=user.user_id if user else None,
+            details={
+                "email": email.lower()[:200],
+                "reason": "unknown_email" if user is None else "bad_password",
+            },
+            request=request,
+            actor_role=user.role if user else None,
+            tenant_id=user.tenant_id if user else None,
+            result=AuditResult.FAILURE,
+            severity=AuditSeverity.WARNING,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
     if not user.is_active:
+        await log_audit_detached(
+            user_id=user.user_id,
+            action=AuditAction.LOGIN_FAILED,
+            entity_type=AuditEntity.USER,
+            entity_id=user.user_id,
+            details={"email": user.email[:200], "reason": "account_deactivated"},
+            request=request,
+            actor_role=user.role,
+            tenant_id=user.tenant_id,
+            result=AuditResult.FAILURE,
+            severity=AuditSeverity.WARNING,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated. Contact your administrator.",
@@ -355,10 +450,24 @@ async def authenticate_user(
     await db.flush()
 
     tokens = await _generate_tokens(db, user, request=request)
+
+    await log_audit_detached(
+        user_id=user.user_id,
+        action=AuditAction.LOGIN_SUCCESS,
+        entity_type=AuditEntity.USER,
+        entity_id=user.user_id,
+        details={"method": "password"},
+        request=request,
+        actor_role=user.role,
+        tenant_id=user.tenant_id,
+        severity=AuditSeverity.INFO,
+    )
     return user, tokens
 
 
-async def google_authenticate(db: AsyncSession, google_id_token: str):
+async def google_authenticate(
+    db: AsyncSession, google_id_token: str, request: Request | None = None
+):
     """
     Authenticate (or begin registration) via a Google ID token.
 
@@ -390,6 +499,18 @@ async def google_authenticate(db: AsyncSession, google_id_token: str):
 
     if user is not None:
         if not user.is_active:
+            await log_audit_detached(
+                user_id=user.user_id,
+                action=AuditAction.LOGIN_FAILED,
+                entity_type=AuditEntity.USER,
+                entity_id=user.user_id,
+                details={"method": "google", "reason": "account_deactivated"},
+                request=request,
+                actor_role=user.role,
+                tenant_id=user.tenant_id,
+                result=AuditResult.FAILURE,
+                severity=AuditSeverity.WARNING,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is deactivated. Contact your administrator.",
@@ -397,7 +518,21 @@ async def google_authenticate(db: AsyncSession, google_id_token: str):
         await _ensure_tenant_not_suspended(db, user)
         user.last_login = datetime.now(timezone.utc)
         await db.flush()
-        tokens = await _generate_tokens(db, user)
+        tokens = await _generate_tokens(db, user, request=request)
+        # The Google subject identifier is deliberately not recorded: it is a
+        # stable cross-service identifier for a person, and the local user id
+        # already names them here.
+        await log_audit_detached(
+            user_id=user.user_id,
+            action=AuditAction.GOOGLE_LOGIN,
+            entity_type=AuditEntity.USER,
+            entity_id=user.user_id,
+            details={"method": "google"},
+            request=request,
+            actor_role=user.role,
+            tenant_id=user.tenant_id,
+            severity=AuditSeverity.INFO,
+        )
         return GoogleAuthResponse(
             status="authenticated",
             tokens=tokens,
@@ -571,7 +706,11 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> TokenRes
 
 
 async def logout(
-    db: AsyncSession, refresh_token: str, *, all_devices: bool = False
+    db: AsyncSession,
+    refresh_token: str,
+    *,
+    all_devices: bool = False,
+    request: Request | None = None,
 ) -> dict[str, str]:
     """
     Revoke the session behind a refresh token.
@@ -596,6 +735,19 @@ async def logout(
         await revoke_all_for_user(db, user_id, REASON_LOGOUT_ALL)
     else:
         await revoke_family(db, family_id, REASON_LOGOUT)
+
+    # Detached, to match this function's contract: logout must never appear to
+    # fail, so an audit problem cannot be allowed to turn it into a 500. The
+    # unreadable-token branches above return early and write nothing -- there
+    # is no identity to attribute the event to.
+    await log_audit_detached(
+        user_id=user_id,
+        action=AuditAction.LOGOUT,
+        entity_type=AuditEntity.REFRESH_SESSION,
+        details={"all_devices": all_devices},
+        request=request,
+        severity=AuditSeverity.INFO,
+    )
     return {"status": "logged_out"}
 
 

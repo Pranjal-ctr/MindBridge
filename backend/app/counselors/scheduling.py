@@ -17,7 +17,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audit import log_audit
+from app.audit import log_audit, log_audit_detached
+from app.audit_actions import AuditAction, AuditEntity, AuditResult, AuditSeverity
 from app.counselors.availability import (
     INACTIVE_SESSION_STATUSES,
     crosses_midnight,
@@ -111,7 +112,11 @@ async def list_schedules(db: AsyncSession, counselor_id: uuid.UUID) -> ScheduleL
 
 
 async def create_schedule(
-    db: AsyncSession, counselor_id: uuid.UUID, payload: ScheduleCreate
+    db: AsyncSession,
+    counselor_id: uuid.UUID,
+    payload: ScheduleCreate,
+    actor_user_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> ScheduleResponse:
     await _counselor_settings(db, counselor_id)
     row = CounselorSchedule(
@@ -126,6 +131,24 @@ async def create_schedule(
     )
     db.add(row)
     await db.flush()
+    # Working hours decide who a student can be offered an appointment with,
+    # so a change to them is an operational change worth a record.
+    await log_audit(
+        db,
+        user_id=actor_user_id,
+        action=AuditAction.COUNSELOR_SCHEDULE_CREATED,
+        entity_type=AuditEntity.SCHEDULE,
+        entity_id=row.schedule_id,
+        details={
+            "counselor_id": str(counselor_id),
+            "day_of_week": row.day_of_week,
+            "start_time": row.start_time.isoformat(),
+            "end_time": row.end_time.isoformat(),
+        },
+        request=request,
+        actor_role="counselor",
+        severity=AuditSeverity.INFO,
+    )
     return _schedule_response(row)
 
 
@@ -163,7 +186,11 @@ async def update_schedule(
 
 
 async def delete_schedule(
-    db: AsyncSession, counselor_id: uuid.UUID, schedule_id: uuid.UUID
+    db: AsyncSession,
+    counselor_id: uuid.UUID,
+    schedule_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> None:
     result = await db.execute(
         select(CounselorSchedule).where(
@@ -178,6 +205,25 @@ async def delete_schedule(
         )
     # Sessions already booked under this schedule are untouched: removing a
     # working pattern must never cancel appointments people are expecting.
+    #
+    # Audited before the delete, while the row's values can still be read --
+    # afterwards there is nothing left to describe what was removed.
+    await log_audit(
+        db,
+        user_id=actor_user_id,
+        action=AuditAction.COUNSELOR_SCHEDULE_DELETED,
+        entity_type=AuditEntity.SCHEDULE,
+        entity_id=row.schedule_id,
+        details={
+            "counselor_id": str(counselor_id),
+            "day_of_week": row.day_of_week,
+            "start_time": row.start_time.isoformat(),
+            "end_time": row.end_time.isoformat(),
+        },
+        request=request,
+        actor_role="counselor",
+        severity=AuditSeverity.NOTICE,
+    )
     await db.delete(row)
     await db.flush()
 
@@ -208,7 +254,11 @@ async def list_exceptions(
 
 
 async def create_exception(
-    db: AsyncSession, counselor_id: uuid.UUID, payload: ExceptionCreate
+    db: AsyncSession,
+    counselor_id: uuid.UUID,
+    payload: ExceptionCreate,
+    actor_user_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> ExceptionResponse:
     await _counselor_settings(db, counselor_id)
     row = CounselorScheduleException(
@@ -222,11 +272,33 @@ async def create_exception(
     )
     db.add(row)
     await db.flush()
+    # The counselor's stated reason for the exception is deliberately not
+    # copied here: it is their private note (illness, family), and the audit
+    # question is only that a date was blocked out or opened up.
+    await log_audit(
+        db,
+        user_id=actor_user_id,
+        action=AuditAction.TIME_OFF_CREATED,
+        entity_type=AuditEntity.SCHEDULE_EXCEPTION,
+        entity_id=row.exception_id,
+        details={
+            "counselor_id": str(counselor_id),
+            "exception_date": row.exception_date.isoformat(),
+            "is_available": row.is_available,
+        },
+        request=request,
+        actor_role="counselor",
+        severity=AuditSeverity.INFO,
+    )
     return ExceptionResponse.model_validate(row)
 
 
 async def delete_exception(
-    db: AsyncSession, counselor_id: uuid.UUID, exception_id: uuid.UUID
+    db: AsyncSession,
+    counselor_id: uuid.UUID,
+    exception_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None = None,
+    request: Request | None = None,
 ) -> None:
     result = await db.execute(
         select(CounselorScheduleException).where(
@@ -239,6 +311,20 @@ async def delete_exception(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Exception not found"
         )
+    await log_audit(
+        db,
+        user_id=actor_user_id,
+        action=AuditAction.TIME_OFF_DELETED,
+        entity_type=AuditEntity.SCHEDULE_EXCEPTION,
+        entity_id=row.exception_id,
+        details={
+            "counselor_id": str(counselor_id),
+            "exception_date": row.exception_date.isoformat(),
+        },
+        request=request,
+        actor_role="counselor",
+        severity=AuditSeverity.NOTICE,
+    )
     await db.delete(row)
     await db.flush()
 
@@ -446,6 +532,7 @@ async def book_session(
     counselor_id: uuid.UUID,
     starts_at: datetime,
     booked_by_user_id: uuid.UUID,
+    booked_by_role: str | None = None,
     request: Request | None = None,
     now: datetime | None = None,
 ) -> BookResponse:
@@ -514,6 +601,23 @@ async def book_session(
         )
     ).first()
     if clash is not None:
+        # Detached: this raises, so a row on the caller's session would roll
+        # back with it. A burst of conflicts on one counselor is how a
+        # double-booking bug or a retry storm first becomes visible.
+        await log_audit_detached(
+            user_id=booked_by_user_id,
+            action=AuditAction.BOOKING_CONFLICT,
+            entity_type=AuditEntity.SESSION,
+            details={
+                "counselor_id": str(counselor_id),
+                "starts_at": starts_at.isoformat(),
+                "reason": "slot_taken",
+            },
+            request=request,
+            actor_role=booked_by_role,
+            result=AuditResult.FAILURE,
+            severity=AuditSeverity.NOTICE,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="That slot was just booked. Here are the next available options.",
@@ -530,6 +634,20 @@ async def book_session(
         now=current,
     )
     if not any(slot.start == starts_at for slot in offered):
+        await log_audit_detached(
+            user_id=booked_by_user_id,
+            action=AuditAction.BOOKING_CONFLICT,
+            entity_type=AuditEntity.SESSION,
+            details={
+                "counselor_id": str(counselor_id),
+                "starts_at": starts_at.isoformat(),
+                "reason": "not_offered",
+            },
+            request=request,
+            actor_role=booked_by_role,
+            result=AuditResult.FAILURE,
+            severity=AuditSeverity.NOTICE,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="That time is no longer available. Please pick another slot.",
@@ -573,8 +691,8 @@ async def book_session(
     await log_audit(
         db,
         user_id=booked_by_user_id,
-        action="counselor_session:book",
-        entity_type="counselor_session",
+        action=AuditAction.BOOKING_CREATED,
+        entity_type=AuditEntity.SESSION,
         entity_id=session.counselor_session_id,
         details={
             "counselor_id": str(counselor_id),
@@ -583,6 +701,8 @@ async def book_session(
             "ends_at": ends_at.isoformat(),
         },
         request=request,
+        actor_role=booked_by_role,
+        severity=AuditSeverity.INFO,
     )
 
     return BookResponse(
@@ -653,11 +773,17 @@ async def cancel_session(
     await log_audit(
         db,
         user_id=actor_user_id,
-        action="counselor_session:cancel",
-        entity_type="counselor_session",
+        action=AuditAction.BOOKING_CANCELLED,
+        entity_type=AuditEntity.SESSION,
         entity_id=session.counselor_session_id,
+        # `reason` is free text typed by whoever cancelled. It is scrubbed and
+        # length-capped by log_audit, and is the one place in this file where
+        # a person's own words reach the table -- kept because "why was this
+        # cancelled" is the question the row exists to answer.
         details={"reason": reason, "role": actor_role},
         request=request,
+        actor_role=actor_role,
+        severity=AuditSeverity.NOTICE,
     )
 
     return BookResponse(
