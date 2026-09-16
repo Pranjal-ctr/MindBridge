@@ -191,9 +191,12 @@ def test_production_configuration_serves_no_docs(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "a-real-production-secret-value")
     monkeypatch.setenv("CORS_ORIGINS", '["https://app.kio.example"]')
     # The developer's .env sets DB_ECHO=true, which production now refuses.
-    # This test is about the docs routes, so it supplies a valid value rather
-    # than tripping an unrelated guard.
+    # This test is about the docs routes, so it supplies valid values rather
+    # than tripping an unrelated guard. Same for the host and email guards.
     monkeypatch.setenv("DB_ECHO", "false")
+    monkeypatch.setenv("ALLOWED_HOSTS", '["api.kio.example"]')
+    monkeypatch.setenv("EMAIL_PROVIDER", "resend")
+    monkeypatch.setenv("RESEND_API_KEY", "re_live_key")
 
     import app.config as config_module
 
@@ -261,6 +264,9 @@ def test_production_refuses_a_loopback_origin():
             # Valid, so the assertion below sees the loopback error rather than
             # the DB_ECHO guard tripping first on the developer's .env.
             DB_ECHO=False,
+            ALLOWED_HOSTS=["api.kio.example"],
+            EMAIL_PROVIDER="resend",
+            RESEND_API_KEY="re_live_key",
         )
     assert "loopback" in str(excinfo.value).lower()
 
@@ -271,6 +277,9 @@ def test_production_accepts_real_origins():
         JWT_SECRET_KEY="a-real-production-secret",
         CORS_ORIGINS=["https://app.kio.example"],
         DB_ECHO=False,
+        ALLOWED_HOSTS=["api.kio.example"],
+        EMAIL_PROVIDER="resend",
+        RESEND_API_KEY="re_live_key",
     )
     assert settings.is_production is True
 

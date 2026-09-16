@@ -6,6 +6,7 @@ Business logic for user profile retrieval and updates.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -16,9 +17,27 @@ from app.users.schemas import UserProfileResponse, UserUpdate
 from database.models import User
 
 
-async def get_user_profile(db: AsyncSession, user_id: uuid.UUID) -> UserProfileResponse:
-    """Fetch user with their role-specific profile."""
-    result = await db.execute(
+async def get_user_profile(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    tenant_ids: Sequence[uuid.UUID] | None = None,
+) -> UserProfileResponse:
+    """
+    Fetch a user with their role-specific profile.
+
+    `tenant_ids` restricts the lookup to those schools. It is optional because
+    the common caller is a user reading their own profile, where the id came
+    from their own token; every caller that takes an id from the URL passes a
+    scope. Without one, a counselor at school A could read a user at school B
+    by id -- the route required a staff role but never checked the two shared a
+    school.
+
+    A user outside the scope is reported as not found rather than forbidden:
+    "this id exists but is not yours" is itself a fact about another school's
+    roster.
+    """
+    query = (
         select(User)
         .options(
             selectinload(User.student_profile),
@@ -28,6 +47,10 @@ async def get_user_profile(db: AsyncSession, user_id: uuid.UUID) -> UserProfileR
         )
         .where(User.user_id == user_id)
     )
+    if tenant_ids is not None:
+        query = query.where(User.tenant_id.in_(tenant_ids))
+
+    result = await db.execute(query)
     user = result.scalar_one_or_none()
 
     if not user:

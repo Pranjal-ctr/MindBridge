@@ -39,6 +39,7 @@ from app.auth.sessions import (
     revoke_family,
 )
 from app.config import settings
+from app.rate_limit import clear_failures, note_failure
 from app.consent.service import (
     enforce_age_gate,
     record_signup_consent,
@@ -405,6 +406,13 @@ async def authenticate_user(
     # not say which account was targeted cannot show credential stuffing. The
     # submitted password is of course never touched.
     if user is None or not verify_password(password, user.password_hash):
+        # Counted per account, not per IP: a shared school IP must not let a
+        # classroom throttle each other, nor let an attacker hide in the crowd.
+        # Raises 429 once the account is over its limit; the audit row below is
+        # written first so the attempt is recorded either way.
+        note_failure(
+            "login", email.lower(), settings.AUTH_FAILED_LOGINS_PER_MINUTE
+        )
         await log_audit_detached(
             user_id=user.user_id if user else None,
             action=AuditAction.LOGIN_FAILED,
@@ -444,6 +452,10 @@ async def authenticate_user(
         )
 
     await _ensure_tenant_not_suspended(db, user)
+
+    # Signed in successfully: drop this account's failure count so a student
+    # who mistyped their password twice is not throttled afterwards.
+    clear_failures("login", email.lower())
 
     # Update last_login
     user.last_login = datetime.now(timezone.utc)

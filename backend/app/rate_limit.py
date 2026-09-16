@@ -21,6 +21,42 @@ _hits: dict[str, deque[float]] = defaultdict(deque)
 _WINDOW_SECONDS = 60.0
 
 
+def note_failure(scope: str, identity: str, limit: int) -> None:
+    """
+    Record a failed attempt against one identity, and refuse once too many.
+
+    Separate from `rate_limit` because the thing being counted is different:
+    that limiter counts *requests from a client*, this counts *failures against
+    an account*. Kio is used from school networks where a whole year group
+    shares one public IP, so an IP-keyed limit either locks out a classroom or
+    is too loose to stop guessing. Keying on the targeted account instead makes
+    the limit independent of how many students sit behind one router.
+
+    Only failures are recorded, so someone signing in correctly is never
+    throttled however busy their school is. The window is the same rolling
+    minute as `rate_limit`, and the counter is in-process -- see the topology
+    note in docs/production-configuration.md.
+    """
+    key = f"fail:{scope}:{identity}"
+    now = time.monotonic()
+    window = _hits[key]
+    while window and now - window[0] > _WINDOW_SECONDS:
+        window.popleft()
+
+    window.append(now)
+    if len(window) > limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts for this account. Please wait a minute.",
+            headers={"Retry-After": "60"},
+        )
+
+
+def clear_failures(scope: str, identity: str) -> None:
+    """Forget an identity's failures after a success."""
+    _hits.pop(f"fail:{scope}:{identity}", None)
+
+
 def rate_limit(scope: str, per_minute: int | None = None):
     """
     Dependency factory: limit requests per minute per client for a given scope.

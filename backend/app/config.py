@@ -79,6 +79,20 @@ class Settings(BaseSettings):
     # Rate Limiting
     # -------------------------------------------------------------------
     RATE_LIMIT_PER_MINUTE: int = 60
+    #: Login attempts per minute from one IP address.
+    #:
+    #: Deliberately far above the per-account limit below. Kio is used from
+    #: school networks, where an entire year group shares one public IP: at 10
+    #: a minute a class arriving together locked each other out, and the
+    #: student who could not sign in had no way to know why. The per-IP ceiling
+    #: is there to stop a flood, not to stop guessing -- that is what
+    #: AUTH_FAILED_LOGINS_PER_MINUTE does, keyed on the account being targeted,
+    #: which a shared IP does not dilute.
+    RATE_LIMIT_LOGIN_PER_MINUTE: int = 60
+    #: Failed attempts per minute against ONE account, from anywhere. This is
+    #: the anti-guessing control; successful logins never count against it, so
+    #: a legitimate user is unaffected no matter how busy their school is.
+    AUTH_FAILED_LOGINS_PER_MINUTE: int = 8
 
     # -------------------------------------------------------------------
     # AI / Gemini
@@ -314,6 +328,81 @@ class Settings(BaseSettings):
                 "DB_ECHO must be false in production. SQLAlchemy echo logs SQL "
                 "statement parameters, which for Kio include conversation and "
                 "message content. Refusing to start."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_allowed_hosts_in_production(self) -> "Settings":
+        """
+        Production must name the hosts it answers for.
+
+        The comment on ALLOWED_HOSTS claimed "the validator below enforces
+        that" and no such validator existed, so TrustedHostMiddleware was never
+        installed in production: main.py adds it only `if settings.ALLOWED_HOSTS`
+        and the default is an empty list. An unconstrained Host header lets a
+        request be reflected into any absolute URL the app builds, and poisons
+        any cache in front of it.
+
+        A wildcard entry is refused for the same reason an empty list is: it
+        reinstates exactly what this is meant to prevent, while looking
+        configured.
+        """
+        if not self.is_production:
+            return self
+        if not self.ALLOWED_HOSTS:
+            raise ValueError(
+                "ALLOWED_HOSTS must list the API's own hostname(s) in "
+                "production, e.g. [\"api.kio.example\"]. Empty means the API "
+                "answers to any Host header."
+            )
+        if any(host.strip() == "*" for host in self.ALLOWED_HOSTS):
+            raise ValueError(
+                "ALLOWED_HOSTS must not contain '*' in production: it accepts "
+                "any Host header, which is what this setting exists to stop."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_working_email_in_production(self) -> "Settings":
+        """
+        Production must be able to actually send mail.
+
+        `get_email_service()` degrades to the noop provider when the provider
+        is unknown or its key is blank -- right for development, silent in
+        production. Every send then "succeeds" while nothing is delivered, and
+        because `try_send()` never raises, the first sign of trouble is a
+        student who cannot verify their address or reset their password and has
+        no way to tell anyone.
+
+        Verification, password reset and the crisis escalation email all depend
+        on this, so it is a startup failure rather than a warning.
+        """
+        if not self.is_production:
+            return self
+
+        provider = (self.EMAIL_PROVIDER or "noop").strip().lower()
+        # Mirrors _PROVIDERS in app/email/service.py. Not imported: that module
+        # imports app.config, and a circular import during settings
+        # construction would fail in a way that names neither file.
+        known = {"noop", "resend"}
+
+        if provider not in known:
+            raise ValueError(
+                f"EMAIL_PROVIDER={provider!r} is not a known provider "
+                f"({', '.join(sorted(known))}). It would silently fall back to "
+                "noop and deliver nothing."
+            )
+        if provider == "noop":
+            raise ValueError(
+                "EMAIL_PROVIDER=noop in production: email verification, "
+                "password reset and crisis escalation would all silently "
+                "deliver nothing. Set EMAIL_PROVIDER=resend with RESEND_API_KEY."
+            )
+        if provider == "resend" and not self.RESEND_API_KEY.strip():
+            raise ValueError(
+                "EMAIL_PROVIDER=resend requires RESEND_API_KEY. A blank key "
+                "falls back to noop, which delivers nothing while reporting "
+                "success."
             )
         return self
 

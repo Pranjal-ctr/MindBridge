@@ -11,9 +11,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.counselors.assignments import scope_tenant_ids
 from app.dependencies import CurrentUser, CurrentTenant, require_role
 from app.users.schemas import UserListResponse, UserProfileResponse, UserUpdate
 from app.users.service import get_user_profile, list_tenant_users, update_user_profile
+from database.models import User
 from database.session import get_db
 
 router = APIRouter()
@@ -46,12 +48,22 @@ async def update_my_profile(
 async def get_user_by_id(
     user_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[
+        User, Depends(require_role("admin", "school_admin", "counselor"))
+    ],
 ):
     """
     Get a specific user's profile.
-    Restricted to admins, school admins, and counselors.
+
+    Staff only, and only within the schools the caller serves -- a platform
+    admin administers every school and is not scoped, but a counselor or school
+    admin is. Previously the id went straight through, so any staff account
+    could read any user on the platform by id.
     """
-    return await get_user_profile(db, user_id)
+    tenant_ids = (
+        None if viewer.role == "admin" else await scope_tenant_ids(db, viewer)
+    )
+    return await get_user_profile(db, user_id, tenant_ids=tenant_ids)
 
 
 @router.get(

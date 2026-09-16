@@ -38,6 +38,7 @@ from app.auth.service import (
     verify_email,
 )
 from app.dependencies import CurrentUser
+from app.config import settings
 from app.rate_limit import rate_limit
 from database.session import get_db
 
@@ -76,7 +77,10 @@ async def signup(
 @router.post(
     "/login",
     response_model=AuthResponse,
-    dependencies=[Depends(rate_limit("login", 10))],
+    # Per-IP flood control only, deliberately generous because school networks
+    # put an entire year group behind one address. Guessing is stopped per
+    # account inside authenticate_user -- see app/rate_limit.note_failure.
+    dependencies=[Depends(rate_limit("login", settings.RATE_LIMIT_LOGIN_PER_MINUTE))],
 )
 async def login(
     payload: LoginRequest,
@@ -98,7 +102,7 @@ async def login(
 @router.post(
     "/google",
     response_model=GoogleAuthResponse,
-    dependencies=[Depends(rate_limit("login", 10))],
+    dependencies=[Depends(rate_limit("login", settings.RATE_LIMIT_LOGIN_PER_MINUTE))],
 )
 async def google_auth(
     payload: GoogleAuthRequest,

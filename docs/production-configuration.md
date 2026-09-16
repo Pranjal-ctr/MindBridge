@@ -35,7 +35,8 @@ otherwise be invisible until it was exploited.
 | `JWT_SECRET_KEY` | 32+ random bytes. Rotating it invalidates every access token and every refresh session immediately. |
 | `CORS_ORIGINS` | JSON array of the real frontend origin(s), e.g. `["https://app.kio.example"]`. |
 | `FRONTEND_URL` | Base for emailed links (verification, password reset, guardian consent). Wrong value = links that 404 or point at localhost. |
-| `ALLOWED_HOSTS` | JSON array of the API's own hostname(s). Blocks Host-header spoofing, which otherwise turns password-reset links into an attacker's domain. |
+| `ALLOWED_HOSTS` | JSON array of the API's own hostname(s). Blocks Host-header spoofing. **Startup refuses an empty list or a wildcard in production** — until the pre-pilot audit this was documented as enforced and was not, so `TrustedHostMiddleware` was never installed. |
+| `EMAIL_PROVIDER` + `RESEND_API_KEY` | Startup refuses `noop`, an unknown provider, or `resend` with a blank key. All three silently fall back to a provider that reports success and delivers nothing — which would break email verification, password reset and crisis escalation with no error anywhere. |
 | `EMAIL_PROVIDER` | `resend`. Leaving it `noop` means verification and reset emails are never delivered — signup appears to work and nobody can confirm an address. |
 | `RESEND_API_KEY` | Required when `EMAIL_PROVIDER=resend`. A blank key degrades to `noop` with a warning rather than crashing. |
 | `EMAIL_FROM` | Must be on a domain verified in Resend, or mail is rejected. |
@@ -140,6 +141,27 @@ It is refused when `ENVIRONMENT=production`, both in `docker-entrypoint.sh` and
 inside `seed.py` itself, because `python -m database.seed` is the obvious thing
 to type and bypasses the shell script. The override exists only for a staging
 stack deliberately labelled production, and must be exactly `i-understand`.
+
+---
+
+## Login throttling and shared school networks
+
+Two separate limits, because they count different things:
+
+| Limit | Keyed on | Default | Purpose |
+|---|---|---|---|
+| `RATE_LIMIT_LOGIN_PER_MINUTE` | client IP | 60 | Flood control |
+| `AUTH_FAILED_LOGINS_PER_MINUTE` | the account being targeted | 8 | Stops guessing |
+
+The IP limit was 10/min, which is a problem specific to how Kio is used: a
+school puts an entire year group behind one public address, so a class arriving
+together locked each other out and the student who could not sign in had no way
+to know why.
+
+Raising it does not weaken anything, because guessing is now stopped per
+account: only **failed** attempts count, a success clears the counter, and the
+limit is independent of how many students share a router. Both counters are
+in-process — see the topology note below.
 
 ---
 

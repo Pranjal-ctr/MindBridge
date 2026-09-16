@@ -42,6 +42,11 @@ def _settings(**overrides) -> Settings:
         CORS_ORIGINS=["https://app.kio.example"],
         GEMINI_API_KEY="a-key",
         DB_ECHO=False,
+        # Required in production since the pre-pilot audit; supplied here so a
+        # failure names the DB_ECHO guard rather than one of these.
+        ALLOWED_HOSTS=["api.kio.example"],
+        EMAIL_PROVIDER="resend",
+        RESEND_API_KEY="re_live_key",
     )
     base.update(overrides)
     return Settings(_env_file=None, **base)
