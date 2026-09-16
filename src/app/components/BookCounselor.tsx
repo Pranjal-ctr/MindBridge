@@ -29,6 +29,7 @@ import {
 import { KioLogo } from './KioLogo';
 import api from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
+import { getDashboardRoute } from '../../lib/protected-route';
 import {
   TIME_WINDOWS,
   bookSlot,
@@ -210,7 +211,7 @@ export function BookCounselor() {
 
             <div className="flex flex-wrap gap-3 justify-center">
               <Link
-                to={isParent ? '/parent' : '/student'}
+                to={homeRoute(user?.role)}
                 className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition"
               >
                 Back to dashboard
@@ -560,13 +561,27 @@ function childName(child?: LinkedChildResponse): string | undefined {
   return `${child.first_name} ${child.last_name}`.trim();
 }
 
+/** Where "home" is for whoever is booking.
+ *
+ * This page serves students and parents from one component, so the header
+ * cannot name a route. `getDashboardRoute` is the same map `ProtectedRoute`
+ * uses to decide where a signed-in user belongs — asking it here means a role
+ * added later needs no change on this page, and that a hardcoded route can
+ * never bounce a parent through /student to get to /parent.
+ */
+function homeRoute(role: string | undefined): string {
+  return role ? getDashboardRoute(role) : '/';
+}
+
 function Header() {
+  const { user } = useAuth();
+
   return (
     <header className="border-b border-border bg-card">
       <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
         <KioLogo className="h-7" />
         <Link
-          to="/student"
+          to={homeRoute(user?.role)}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
