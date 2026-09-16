@@ -11,7 +11,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { useMemories } from '../../hooks/useMemory';
+import { useWellnessScore } from '../../hooks/useWellness';
 import type { MemoryType } from '../../lib/types';
+import { StudentLayout } from './student/StudentLayout';
 
 const MEMORY_TYPE_CONFIG: Record<MemoryType, {
   label: string;
@@ -67,10 +69,15 @@ const MEMORY_TYPE_CONFIG: Record<MemoryType, {
 const TYPE_ORDER: MemoryType[] = ['goal', 'academic', 'emotion', 'relationship', 'preference', 'fact'];
 
 export function StudentGrowthProfile() {
+  // The wellness score lives here now rather than on Home. It is a number a
+  // student cannot move today, and opening the app to it every morning reads
+  // as a verdict; here it is something they came looking for.
+  const { score: wellness } = useWellnessScore();
   const { user } = useAuth();
   const { groupedMemories, memories, isLoading, error, deleteMemory, togglePin } = useMemories();
 
   return (
+    <StudentLayout variant="bare">
     <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white">
@@ -81,7 +88,7 @@ export function StudentGrowthProfile() {
               className="flex items-center gap-1 text-white/80 hover:text-white transition text-sm"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back to Chat
+              Back to Home
             </Link>
           </div>
           <div className="flex items-center gap-4">
@@ -95,7 +102,7 @@ export function StudentGrowthProfile() {
               </p>
             </div>
           </div>
-          <div className="mt-6 flex gap-4 text-sm">
+          <div className="mt-6 flex flex-wrap gap-2 text-sm sm:gap-4">
             <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-2">
               <span className="font-semibold">{memories.length}</span> memories
             </div>
@@ -105,6 +112,14 @@ export function StudentGrowthProfile() {
             <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-2">
               <span className="font-semibold">{Object.keys(groupedMemories).length}</span> categories
             </div>
+            {wellness?.has_data && wellness.overall !== null && (
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-2">
+                <span className="font-semibold">{Math.round(wellness.overall)}</span>
+                <span className="text-white/70">/100</span> wellness
+                {wellness.trend === 'improving' && ' ↑'}
+                {wellness.trend === 'declining' && ' ↓'}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -214,5 +229,6 @@ export function StudentGrowthProfile() {
         )}
       </div>
     </div>
+    </StudentLayout>
   );
 }

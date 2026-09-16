@@ -1,7 +1,7 @@
 # Kio SaaS App — Project Context
 
-> **Last Updated:** September 11, 2026
-> **Status:** Production hardening complete -- AI control layer, audit trail, availability engine, revocable sessions, observability, consent layer
+> **Last Updated:** September 16, 2026
+> **Status:** Production hardening complete -- student experience redesign, AI control layer, audit trail, availability engine, revocable sessions, observability, consent layer
 > **Tests:** 471 backend (`pytest tests/`) + 42 frontend (`npm test`)
 
 ---
@@ -53,13 +53,18 @@ Design MindBridge SaaS App/
 │   │   ├── fonts.css             # Google Fonts (Inter)
 │   │   ├── tailwind.css          # Tailwind v4 config (@source directive)
 │   │   ├── theme.css             # Design tokens (CSS variables + @theme)
-│   │   └── globals.css           # Global overrides (currently empty)
+│   │   └── globals.css           # Kio idle-motion keyframes (reduced-motion safe)
 │   └── app/
 │       ├── App.tsx               # Root component with React Router
 │       └── components/
 │           ├── LandingPage.tsx    # Public marketing page
 │           ├── LoginSignup.tsx    # Auth page (login/signup toggle)
-│           ├── StudentDashboard.tsx   # AI chat + wellness tracking
+│           ├── StudentDashboard.tsx   # Comrade chat (/student/comrade)
+│           ├── KioMascot.tsx          # Kio orb (idle motion, blink, particles)
+│           ├── student/
+│           │   ├── StudentLayout.tsx  # Shared student shell + nav
+│           │   ├── StudentHome.tsx    # Calm Home (/student)
+│           │   └── StudentJournal.tsx # Private journal
 │           ├── ParentDashboard.tsx    # Insights + recommendations
 │           ├── CounselorDashboard.tsx # Student profiles + sessions
 │           ├── SchoolAdminDashboard.tsx # Anonymized analytics
@@ -95,9 +100,11 @@ Design MindBridge SaaS App/
 
 | Path                  | Component            | Description                          |
 |-----------------------|----------------------|--------------------------------------|
-| `/student`            | StudentDashboard     | Comrade chat + check-in + mood        |
+| `/student`            | StudentHome          | Calm starting point (mood + entries)  |
+| `/student/comrade`    | StudentDashboard     | Comrade chat (was `/student`)         |
+| `/student/journal`    | StudentJournal       | Private journal entries               |
 | `/student/family`     | StudentInviteCode    | Guardian management + invite codes    |
-| `/student/growth`     | StudentGrowthProfile | Wellness trend + personal insights    |
+| `/student/growth`     | StudentGrowthProfile | Wellness score, trend, insights       |
 | `/student/activities` | StudentActivities    | Weekly activities + AI summary        |
 | `/student/profile`    | StudentProfile       | Age, gender, account details          |
 | `/parent`             | ParentDashboard      | Child's wellness insights             |
@@ -119,7 +126,7 @@ Design MindBridge SaaS App/
 | `/admin/audit`                | Audit logs (+ CSV export)                      |
 | `/admin/settings`             | Safety thresholds as validated JSON            |
 
-`*` redirects to `/`.
+`/student/chat` redirects to `/student/comrade`; `*` redirects to `/`.
 
 ---
 
@@ -166,6 +173,43 @@ npm run build
 ---
 
 ## 📝 Change Log
+
+### September 16, 2026 — Student experience: a Home that isn't a dashboard
+
+- **`/student` was the chat.** Signing in dropped a student back into their
+  previous conversation before they had said anything, under a `58/100` wellness
+  score in large type. Both are now moved rather than removed: the chat is
+  `/student/comrade` (with `/student/chat` redirecting, so bookmarks and old
+  emailed links still land somewhere), and the score lives in **Growth**, where
+  someone has gone looking for it. A number a teenager cannot move today, shown
+  every time they open the app, reads as a verdict on a bad day.
+- **Home (`student/StudentHome.tsx`) answers one question** — how are you, and
+  what would you like to do — and collects **no** mood of its own. The check-in
+  is still the mandatory step right after login (it needs a reason as well as a
+  mood, and it feeds the wellness engine and parent insights), so Home
+  *reflects* it: today's mood, when it was recorded, and a quiet way to update
+  it. If the window is somehow still open Home opens the same existing modal
+  rather than introducing a second way to record a mood.
+- **`student/StudentLayout.tsx` is the shell every student page now shares** —
+  one nav (Home / Comrade / Growth / Journal / Activities / Counselor), one
+  sign-out, one notification bell. The existing pages adopt it through
+  `variant="bare"`, which wraps them without touching their internals — three
+  lines each, no rewrite of Growth, Activities or Profile.
+- **Journal (`/student/journal`) is the first client for an API that shipped
+  with the wellness module and had none** — `POST`/`GET /wellness/journal`. The
+  sidebar link was `href="#"`. Deliberately the plainest surface in the product:
+  one text area, one button, a quiet list of what came before. It does not ask
+  for a mood; the check-in already did, and asking twice turns writing into a
+  form.
+- **`KioMascot.tsx`** replaces the Brain icon in chat and gives Kio a presence
+  on Home. Idle motion only — a 6px float, a breathing glow, drifting motes,
+  an occasional blink. Amplitudes and durations are chosen to read as breathing
+  rather than animating. **Reduced motion is honoured twice**: the component
+  checks `prefers-reduced-motion` in JS before attaching anything (the blink
+  runs on a timer, which no CSS variant could stop) and the keyframes in
+  `globals.css` carry a media-query backstop.
+- No backend change, no migration, no new dependency. Typecheck clean;
+  42 frontend and 471 backend tests pass.
 
 ### September 16, 2026 — AI control layer: providers, runtime switching, guardrails
 - **Extension, not a rewrite.** `AIProvider`, the factory, `AIRouter` and
@@ -761,6 +805,8 @@ npm run build
 - Auth: email/password, Google Sign-In, email verification, password reset,
   **revocable refresh sessions** (migration 017), RBAC, multi-tenancy
 - Consent layer + age gate (under-13 refused, 13–17 guardian-approved), policy pages
+- Student experience: Home at `/student`, Comrade chat at `/student/comrade`,
+  private journal, one shared shell and nav across every student page
 - Comrade AI chat (Gemini 2.5 Flash) with DB-first prompt versioning, memory hooks,
   per-student daily budget, safety tripwires
 - Wellness: 12-hour check-in windows, mood calendar, persistent weekly activities,
@@ -778,7 +824,7 @@ npm run build
   supported-model registry, runtime admin switching with no restart, bounded
   retry/fallback, and cost guardrails — see `docs/ai-providers.md`
 
-**Numbers:** 29 frontend routes · 20 backend modules · 48 tables · 19 migrations ·
+**Numbers:** 32 frontend routes · 20 backend modules · 48 tables · 19 migrations ·
 471 backend tests · 42 frontend tests
 
 **Known gaps** — see Next Steps below.

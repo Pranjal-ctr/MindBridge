@@ -525,6 +525,31 @@ export interface WeeklyReportResponse {
 
 // ── Wellness Score & Emotions ─────────────────────────────────────────
 
+// ── Journal ───────────────────────────────────────────────────────────
+// Mirrors backend/app/wellness/schemas.py. The endpoints have existed since
+// the wellness module shipped; this is the first client to use them.
+
+export interface JournalEntryCreate {
+  title?: string | null;
+  content: string;
+  /** 1-10. Left unset here: Home's check-in is where mood is recorded. */
+  mood_score?: number | null;
+}
+
+export interface JournalEntryResponse {
+  journal_id: string;
+  student_id: string;
+  title: string | null;
+  content: string;
+  mood_score: number | null;
+  created_at: string;
+}
+
+export interface JournalListResponse {
+  entries: JournalEntryResponse[];
+  total: number;
+}
+
 export interface WellnessScoreResponse {
   has_data: boolean;
   overall: number | null;

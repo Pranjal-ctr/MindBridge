@@ -16,6 +16,7 @@ import api from '../../lib/api';
 import { authErrorMessage } from '../../lib/auth-api';
 import { useAuth } from '../../lib/auth-context';
 import type { UserProfileResponse } from '../../lib/types';
+import { StudentLayout } from './student/StudentLayout';
 
 const GENDER_OPTIONS = ['Female', 'Male', 'Non-binary', 'Prefer not to say'];
 
@@ -85,6 +86,7 @@ export function StudentProfile() {
   const missingAge = profile != null && profile.student_profile?.age == null;
 
   return (
+    <StudentLayout variant="bare">
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b border-border">
         <div className="max-w-3xl mx-auto px-4 h-16 flex items-center gap-4">
@@ -219,5 +221,6 @@ export function StudentProfile() {
         <Disclaimer variant="short" className="mt-6" />
       </div>
     </div>
+    </StudentLayout>
   );
 }

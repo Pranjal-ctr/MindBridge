@@ -1,0 +1,100 @@
+/**
+ * Global keyframes.
+ *
+ * Kept small: anything expressible as a Tailwind utility should be. What lives
+ * here is motion Tailwind has no built-in for — Kio's idle behaviour.
+ *
+ * Every animation is calm by construction: long durations, small amplitudes,
+ * ease-in-out throughout, nothing that scales sharply, spins, or bounces. Kio
+ * should read as breathing, not as animating.
+ *
+ * Reduced motion is honoured twice over — the component checks
+ * `prefers-reduced-motion` in JS before attaching any of these (its blink runs
+ * on a timer, which no CSS variant could stop), and the media query below is a
+ * backstop for anything that reaches the DOM another way.
+ */
+
+/* Vertical float — 6px over 7s. Below ~4px it is invisible; above ~10px it
+   starts to read as bobbing. */
+@keyframes kio-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* The ambient glow breathing. Scale stays under 6% so the orb never appears
+   to change size — only the light around it. */
+@keyframes kio-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.88;
+  }
+  50% {
+    transform: scale(1.055);
+    opacity: 1;
+  }
+}
+
+/* Three drift paths so the motes never move in unison. Each is a few pixels
+   over 17–26 seconds: perceptible only if you watch for it. */
+@keyframes kio-mote-0 {
+  0%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translate(3px, -7px);
+    opacity: 1;
+  }
+}
+
+@keyframes kio-mote-1 {
+  0%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(-5px, 5px);
+    opacity: 0.65;
+  }
+}
+
+@keyframes kio-mote-2 {
+  0%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translate(4px, 6px);
+    opacity: 1;
+  }
+}
+
+/* Slow drift for the page's decorative background blobs. */
+@keyframes kio-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0) scale(1.04);
+  }
+}
+
+.animate-kio-drift {
+  animation: kio-drift 14s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-kio-drift {
+    animation: none;
+  }
+}

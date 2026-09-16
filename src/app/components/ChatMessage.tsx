@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Brain } from 'lucide-react';
+import { KioMascot } from './KioMascot';
 import { motion } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -96,9 +96,7 @@ export function ChatMessage({ message, typewriter = false, onGrow }: ChatMessage
       className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
     >
       {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1 mr-2">
-          <Brain className="w-4 h-4 text-white" />
-        </div>
+        <KioMascot size={32} withParticles={false} className="mr-2 mt-0.5" />
       )}
       <div
         className={`max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 text-[0.95rem] ${

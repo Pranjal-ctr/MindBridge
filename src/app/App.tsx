@@ -3,6 +3,8 @@ import { AuthProvider } from '../lib/auth-context';
 import { ProtectedRoute } from '../lib/protected-route';
 import { LandingPage } from './components/LandingPage';
 import { StudentDashboard } from './components/StudentDashboard';
+import { StudentHome } from './components/student/StudentHome';
+import { StudentJournal } from './components/student/StudentJournal';
 import { ParentDashboard } from './components/ParentDashboard';
 import { CounselorDashboard } from './components/CounselorDashboard';
 import { SchoolAdminDashboard } from './components/SchoolAdminDashboard';
@@ -59,11 +61,34 @@ export default function App() {
           <Route path="/guardian-consent" element={<GuardianConsent />} />
 
           {/* Protected routes — require authentication */}
+          {/* `/student` is the Home, not the chat. Logging in used to drop a
+              student straight back into their previous conversation before
+              they had said anything; Home asks how they are first. */}
           <Route
             path="/student"
             element={
               <ProtectedRoute roles={['student']}>
+                <StudentHome />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/comrade"
+            element={
+              <ProtectedRoute roles={['student']}>
                 <StudentDashboard />
+              </ProtectedRoute>
+            }
+          />
+          {/* The chat lived at `/student` until the Home redesign. Anything
+              still pointing there — a bookmark, an old email link — lands on
+              the chat rather than a 404. */}
+          <Route path="/student/chat" element={<Navigate to="/student/comrade" replace />} />
+          <Route
+            path="/student/journal"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <StudentJournal />
               </ProtectedRoute>
             }
           />

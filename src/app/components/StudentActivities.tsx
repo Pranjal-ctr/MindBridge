@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { KioLogo } from './KioLogo';
 import api from '../../lib/api';
+import { StudentLayout } from './student/StudentLayout';
 import type {
   ActivitiesResponse,
   ActivityItem,
@@ -90,6 +91,7 @@ export function StudentActivities() {
   };
 
   return (
+    <StudentLayout variant="bare">
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-teal-50">
       {/* Header */}
       <header className="bg-white border-b border-border">
@@ -259,5 +261,6 @@ export function StudentActivities() {
         )}
       </div>
     </div>
+    </StudentLayout>
   );
 }

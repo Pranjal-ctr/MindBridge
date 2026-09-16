@@ -1,23 +1,58 @@
-import { Link } from 'react-router-dom';
-import { Brain, MessageSquare, TrendingUp, BookOpen, Lightbulb, Settings, Send, Mic, Calendar, Menu, X, Plus, Loader2, Trash2, Users, ClipboardCheck, UserCircle } from 'lucide-react';
-import { KioLogo } from './KioLogo';
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useAuth } from '../../lib/auth-context';
+/**
+ * Comrade — the chat surface, at `/student/comrade`.
+ *
+ * This file used to be the whole student experience: sidebar, wellness cards,
+ * mood card and chat in one 500-line component mounted at `/student`. It now
+ * does one thing. The shell moved to StudentLayout, the wellness score moved
+ * to Growth, and the mood card moved to Home.
+ *
+ * What did NOT change: the onboarding gate, the mandatory check-in that runs
+ * before the app is usable, conversation history, New Chat, delete, the
+ * typewriter reveal on the freshest reply, the suggested prompts, and the
+ * privacy note under the composer.
+ *
+ * `?c=<conversation_id>` opens a specific conversation, which is how Home's
+ * "Continue where you left off" and the sidebar's Recent Chats link in.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import {
+  Loader2,
+  MessageSquare,
+  Plus,
+  Send,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { KioMascot } from './KioMascot';
+import { StudentLayout } from './student/StudentLayout';
 import { useConversations, useMessages } from '../../hooks/useConversations';
 import { useWellnessScore } from '../../hooks/useWellness';
 import { StudentOnboarding } from './StudentOnboarding';
-import { NotificationBell } from './NotificationBell';
 import { DailyCheckinModal } from './DailyCheckinModal';
-import { MoodCalendarModal } from './MoodCalendarModal';
 import { ChatMessage } from './ChatMessage';
 import { Disclaimer } from './Disclaimer';
 import api from '../../lib/api';
-import { MOOD_META, formatTime } from '../../lib/mood';
 import type { DailyCheckinStatusResponse, OnboardingResponse } from '../../lib/types';
 
+const SUGGESTED_PROMPTS = [
+  'I feel stressed before exams',
+  'I feel lonely',
+  'How can I improve my confidence?',
+  'Help me make a study plan',
+];
+
 export function StudentDashboard() {
-  const { user, logout } = useAuth();
-  const { conversations, isLoading: convsLoading, createConversation, deleteConversation, refetch: refetchConversations } = useConversations();
+  const {
+    conversations,
+    isLoading: convsLoading,
+    createConversation,
+    deleteConversation,
+    refetch: refetchConversations,
+  } = useConversations();
+
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // First-login onboarding: show the wizard once until completed
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -25,21 +60,25 @@ export function StudentDashboard() {
     let cancelled = false;
     api
       .get<OnboardingResponse | null>('/onboarding/')
-      .then((res) => { if (!cancelled && !res.data) setShowOnboarding(true); })
-      .catch(() => {/* non-fatal: skip onboarding gate on error */});
-    return () => { cancelled = true; };
+      .then((res) => {
+        if (!cancelled && !res.data) setShowOnboarding(true);
+      })
+      .catch(() => {
+        /* non-fatal: skip onboarding gate on error */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Mandatory mood check-in: gate the dashboard until this window's is done
-  const [checkinStatus, setCheckinStatus] = useState<DailyCheckinStatusResponse | null>(null);
+  // Mandatory mood check-in. Unchanged: it gates the app until this window's
+  // check-in exists, and records a reason as well as a mood because the
+  // wellness engine and parent insights both depend on it.
   const [showCheckin, setShowCheckin] = useState(false);
-  const [showMoodUpdate, setShowMoodUpdate] = useState(false);
-  const [showMoodCalendar, setShowMoodCalendar] = useState(false);
 
   const fetchCheckinStatus = useCallback(async () => {
     try {
       const { data } = await api.get<DailyCheckinStatusResponse>('/wellness/checkin/today');
-      setCheckinStatus(data);
       setShowCheckin(!data.completed_today);
     } catch {
       /* non-fatal: skip the gate if the status check fails */
@@ -51,11 +90,12 @@ export function StudentDashboard() {
   }, [fetchCheckinStatus]);
 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const { messages, isLoading: msgsLoading, isSending, sendMessage } = useMessages(activeConversationId);
-  const { score: wellness, refetch: refetchWellness } = useWellnessScore();
+  const { messages, isLoading: msgsLoading, isSending, sendMessage } =
+    useMessages(activeConversationId);
+  const { refetch: refetchWellness } = useWellnessScore();
 
   const [messageInput, setMessageInput] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [chatListOpen, setChatListOpen] = useState(false);
   // Message id of the freshest AI reply — the only one that types itself out.
   const [typingId, setTypingId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -64,30 +104,34 @@ export function StudentDashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Auto-select the first conversation on load
+  // Open the conversation named in the URL, else fall back to the most recent.
+  // Landing on the newest chat is fine *here* — this is the chat screen. It is
+  // Home that login now opens, which is what stops Kio dropping a student
+  // straight back into their last conversation before they have said hello.
   useEffect(() => {
-    if (conversations.length > 0 && !activeConversationId) {
-      setActiveConversationId(conversations[0].conversation_id);
-    }
-  }, [conversations, activeConversationId]);
+    if (activeConversationId || conversations.length === 0) return;
+    const requested = searchParams.get('c');
+    const match = requested
+      ? conversations.find((c) => c.conversation_id === requested)
+      : undefined;
+    setActiveConversationId(match?.conversation_id ?? conversations[0].conversation_id);
+  }, [conversations, activeConversationId, searchParams]);
 
-  // Auto-scroll to bottom when messages change
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const suggestedPrompts = [
-    "I feel stressed before exams",
-    "I feel lonely",
-    "How can I improve my confidence?",
-    "Help me make a study plan"
-  ];
+  const selectConversation = (id: string) => {
+    setActiveConversationId(id);
+    setChatListOpen(false);
+    // Keep the URL shareable/reloadable without stacking history entries.
+    setSearchParams({ c: id }, { replace: true });
+  };
 
   const handleSendMessage = async () => {
     const text = messageInput.trim();
     if (!text || isSending) return;
 
-    // If no active conversation, create one first
     let convId = activeConversationId;
     if (!convId) {
       try {
@@ -103,9 +147,7 @@ export function StudentDashboard() {
 
     try {
       const data = await sendMessage(text);
-      // Type out just this reply (not older messages or history loads).
       setTypingId(data.ai_message.message_id);
-      // Refetch conversations to pick up auto-generated titles
       refetchConversations();
       // The intelligence pipeline runs as a background task after the chat
       // response returns, so give it a moment before pulling the updated score.
@@ -125,8 +167,7 @@ export function StudentDashboard() {
   const handleNewConversation = async () => {
     try {
       const newConv = await createConversation();
-      setActiveConversationId(newConv.conversation_id);
-      setSidebarOpen(false);
+      selectConversation(newConv.conversation_id);
     } catch {
       // Error handled by hook
     }
@@ -134,17 +175,88 @@ export function StudentDashboard() {
 
   const handleDeleteConversation = async (convId: string) => {
     await deleteConversation(convId);
-    if (activeConversationId === convId) {
-      setActiveConversationId(null);
-    }
+    if (activeConversationId === convId) setActiveConversationId(null);
   };
 
   const activeConversation = conversations.find(
-    (c) => c.conversation_id === activeConversationId
+    (c) => c.conversation_id === activeConversationId,
+  );
+
+  const conversationList = (
+    <>
+      <button
+        type="button"
+        onClick={handleNewConversation}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
+      >
+        <Plus className="h-4 w-4" strokeWidth={2} />
+        New Chat
+      </button>
+
+      <div className="mt-3 min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+        {convsLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-5 w-5 motion-safe:animate-spin text-muted-foreground" />
+          </div>
+        ) : conversations.length === 0 ? (
+          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+            No conversations yet.
+          </p>
+        ) : (
+          conversations.map((conv) => {
+            const active = conv.conversation_id === activeConversationId;
+            return (
+              <div
+                key={conv.conversation_id}
+                className={`group flex items-center rounded-xl transition ${
+                  active ? 'bg-secondary/10 text-secondary' : 'hover:bg-muted/60'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => selectConversation(conv.conversation_id)}
+                  aria-current={active ? 'true' : undefined}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left"
+                >
+                  <MessageSquare className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                  <span className="truncate text-sm">
+                    {conv.title || 'New Conversation'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteConversation(conv.conversation_id)}
+                  aria-label={`Delete ${conv.title || 'conversation'}`}
+                  className="mr-1 rounded-lg p-1.5 text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </>
   );
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <StudentLayout
+      variant="full"
+      headerRight={
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setChatListOpen(true)}
+            className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted/60 hover:text-foreground lg:hidden"
+          >
+            Chats
+          </button>
+          <span className="hidden text-xs text-muted-foreground sm:inline sm:text-sm">
+            Safe &amp; Private
+          </span>
+        </div>
+      }
+    >
       {showOnboarding && <StudentOnboarding onComplete={() => setShowOnboarding(false)} />}
       {!showOnboarding && showCheckin && (
         <DailyCheckinModal
@@ -155,346 +267,141 @@ export function StudentDashboard() {
           }}
         />
       )}
-      {!showOnboarding && showMoodUpdate && (
-        <DailyCheckinModal
-          mode="update"
-          onClose={() => setShowMoodUpdate(false)}
-          onComplete={() => {
-            setShowMoodUpdate(false);
-            fetchCheckinStatus();
-            refetchWellness();
-          }}
-        />
-      )}
-      {showMoodCalendar && <MoodCalendarModal onClose={() => setShowMoodCalendar(false)} />}
-      {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-50 w-64 bg-sidebar border-r border-sidebar-border transition-transform duration-300 ease-in-out`}>
-        <div className="flex flex-col h-full">
-          <div className="p-4 border-b border-sidebar-border">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <KioLogo className="h-7 w-auto" />
-              </div>
-              <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="mt-3 px-3 py-2 bg-sidebar-accent rounded-lg">
-              <div className="text-sm font-medium">
-                {user ? `${user.first_name} ${user.last_name}` : 'Loading...'}
-              </div>
-              <div className="text-xs text-muted-foreground">Student</div>
-            </div>
-          </div>
 
-          {/* New Conversation Button */}
-          <div className="p-3">
-            <button
-              onClick={handleNewConversation}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition text-sm font-medium"
-            >
-              <Plus className="w-4 h-4" />
-              New Chat
-            </button>
-          </div>
+      <div className="flex min-h-0 flex-1">
+        {/* ── Conversation rail (desktop) ──────────────────────────── */}
+        <aside className="hidden w-60 shrink-0 flex-col border-r border-border/60 px-3 pb-4 lg:flex">
+          {conversationList}
+        </aside>
 
-          {/* Conversation List */}
-          <div className="flex-1 overflow-y-auto px-3 space-y-1">
-            {convsLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : conversations.length === 0 ? (
-              <div className="text-center py-8 text-sm text-muted-foreground">
-                No conversations yet. Start a new chat!
-              </div>
-            ) : (
-              conversations.map((conv) => (
-                <div
-                  key={conv.conversation_id}
-                  className={`group flex items-center justify-between rounded-lg transition cursor-pointer ${
-                    activeConversationId === conv.conversation_id
-                      ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                      : 'text-sidebar-foreground hover:bg-sidebar-accent'
-                  }`}
+        {/* ── Conversation panel (tablet / phone) ──────────────────── */}
+        {chatListOpen && (
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setChatListOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col bg-card p-3 shadow-xl">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium">Your chats</span>
+                <button
+                  type="button"
+                  onClick={() => setChatListOpen(false)}
+                  aria-label="Close chat list"
+                  className="rounded-lg p-1.5 transition hover:bg-muted"
                 >
-                  <button
-                    onClick={() => {
-                      setActiveConversationId(conv.conversation_id);
-                      setSidebarOpen(false);
-                    }}
-                    className="flex-1 flex items-center gap-3 px-3 py-2 text-left min-w-0"
-                  >
-                    <MessageSquare className="w-4 h-4 shrink-0" />
-                    <span className="text-sm truncate">
-                      {conv.title || 'New Conversation'}
-                    </span>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteConversation(conv.conversation_id);
-                    }}
-                    className="p-1.5 mr-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {conversationList}
+            </div>
           </div>
+        )}
 
-          {/* Sidebar Navigation */}
-          <nav className="p-3 space-y-1 border-t border-sidebar-border">
-            <Link to="/student/growth" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
-              <TrendingUp className="w-5 h-5" />
-              <span className="text-sm">Growth Profile</span>
-            </Link>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
-              <BookOpen className="w-5 h-5" />
-              <span className="text-sm">Journal</span>
-            </a>
-            <Link to="/student/activities" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
-              <Lightbulb className="w-5 h-5" />
-              <span className="text-sm">Activities & Insights</span>
-            </Link>
-            <Link to="/student/family" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
-              <Users className="w-5 h-5" />
-              <span className="text-sm">Family</span>
-            </Link>
-            <Link to="/student/profile" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
-              <UserCircle className="w-5 h-5" />
-              <span className="text-sm">My Profile</span>
-            </Link>
-          </nav>
-
-          <div className="p-4 border-t border-sidebar-border space-y-2">
-            <Link to="/book-counselor" className="flex items-center justify-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg hover:bg-accent/90 transition">
-              <span className="text-sm font-medium">Book Counselor</span>
-            </Link>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition">
-              <Settings className="w-5 h-5" />
-              <span className="text-sm">Settings</span>
-            </a>
-            <button
-              onClick={logout}
-              className="w-full flex items-center justify-center px-3 py-2 rounded-lg text-muted-foreground hover:bg-sidebar-accent transition text-sm"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className="h-16 border-b border-border bg-card flex items-center justify-between px-4 md:px-6">
-          <div className="flex items-center gap-4">
-            <button className="md:hidden" onClick={() => setSidebarOpen(true)}>
-              <Menu className="w-6 h-6" />
-            </button>
-            <h1 className="text-lg font-semibold">
-              {activeConversation?.title || 'AI Wellness Companion'}
+        {/* ── Transcript ───────────────────────────────────────────── */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="border-b border-border/60 px-4 py-3 md:px-6">
+            <h1 className="truncate font-heading text-base font-semibold text-primary">
+              {activeConversation?.title || 'Talk to Comrade'}
             </h1>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-muted-foreground">
-              <span className="hidden sm:inline">Always here to listen • </span>Safe &amp; Private
-            </div>
-            <NotificationBell />
-          </div>
-        </header>
 
-        {/* Wellness Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 md:p-6 border-b border-border">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-5 border border-blue-200">
-            <div className="text-sm font-medium text-blue-700 mb-1">Wellness Score</div>
-            <div className="text-2xl font-bold text-blue-900">
-              {wellness?.has_data ? `${Math.round(wellness.overall!)}/100` : '—'}
-            </div>
-            <div className="text-xs text-blue-600 mt-1.5">
-              {wellness?.has_data
-                ? wellness.trend === 'improving'
-                  ? '↑ Improving'
-                  : wellness.trend === 'declining'
-                  ? '↓ Needs attention'
-                  : 'Holding steady'
-                : 'Chat or check in to get started'}
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-xl p-5 border border-teal-200">
-            <div className="text-sm font-medium text-teal-700 mb-1">Check-in Streak</div>
-            <div className="text-2xl font-bold text-teal-900">
-              {wellness?.streak_days ?? 0} day{wellness?.streak_days === 1 ? '' : 's'}
-            </div>
-            <div className="text-xs text-teal-600 mt-1.5">
-              {(wellness?.streak_days ?? 0) > 0 ? 'Keep it up!' : 'Check in today to start a streak'}
-            </div>
-          </div>
-
-          {/* Current Mood */}
-          {checkinStatus?.completed_today && checkinStatus.checkin ? (
-            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-5 border border-indigo-200">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-sm font-medium text-indigo-700 mb-1">Today's Mood</div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl leading-none">
-                      {MOOD_META[checkinStatus.checkin.mood].emoji}
-                    </span>
-                    <span className="text-lg font-semibold text-indigo-900">
-                      {MOOD_META[checkinStatus.checkin.mood].label}
-                    </span>
-                  </div>
-                  <div className="text-xs text-indigo-600 mt-1.5">
-                    {checkinStatus.checkin.created_at
-                      ? `Last updated ${formatTime(checkinStatus.checkin.created_at)}`
-                      : 'Updated this session'}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 md:p-6">
+            {msgsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-6 w-6 motion-safe:animate-spin text-muted-foreground" />
+              </div>
+            ) : messages.length === 0 ? (
+              <>
+                <div className="flex flex-col items-center py-6 text-center">
+                  <KioMascot size={104} state="responding" />
+                  <p className="mt-4 max-w-sm text-foreground">
+                    Hey! I'm <strong>Comrade</strong>, your trusted companion here on
+                    Kio. How are you feeling today?
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <p className="text-center text-sm text-muted-foreground">
+                    Try asking about:
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {SUGGESTED_PROMPTS.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => setMessageInput(prompt)}
+                        className="rounded-xl border border-border/60 bg-card px-4 py-3 text-left text-sm transition hover:border-border hover:bg-muted/50"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <button
-                  onClick={() => setShowMoodCalendar(true)}
-                  className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-200/60 transition"
-                  title="View mood calendar"
-                >
-                  <Calendar className="w-4 h-4" />
-                </button>
-              </div>
-              {checkinStatus.updates_remaining > 0 ? (
-                <button
-                  onClick={() => setShowMoodUpdate(true)}
-                  className="mt-3 w-full py-1.5 text-sm font-medium text-indigo-700 bg-white/70 hover:bg-white rounded-lg border border-indigo-200 transition"
-                >
-                  Update Mood
-                </button>
-              ) : (
-                <div className="mt-3 text-xs text-indigo-500 text-center py-1.5">
-                  Mood already updated for this session.
-                </div>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowCheckin(true)}
-              className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-5 border-2 border-dashed border-indigo-300 text-left hover:border-indigo-400 transition"
-            >
-              <div className="flex items-center gap-2 text-sm font-medium text-indigo-700 mb-1">
-                <ClipboardCheck className="w-4 h-4" />
-                Complete Today's Check-in
-              </div>
-              <div className="text-xs text-indigo-600">
-                A quick mood check keeps your insights accurate.
-              </div>
-            </button>
-          )}
-        </div>
+              </>
+            ) : (
+              messages.map((msg) => (
+                <ChatMessage
+                  key={msg.message_id}
+                  message={msg}
+                  typewriter={msg.message_id === typingId}
+                  onGrow={scrollToEnd}
+                />
+              ))
+            )}
 
-        {/* Chat Area */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
-          {msgsLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : messages.length === 0 ? (
-            <>
-              {/* Empty state — show suggested prompts */}
+            {isSending && (
               <div className="flex justify-start">
-                <div className="flex items-start gap-2">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1">
-                    <Brain className="w-4 h-4 text-white" />
-                  </div>
-                  <div className="max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 bg-muted text-foreground">
-                    Hey! I'm <strong>Comrade</strong>, your trusted companion here on Kio. How are you feeling today?
-                  </div>
+                <KioMascot
+                  size={32}
+                  state="thinking"
+                  withParticles={false}
+                  className="mr-2 mt-0.5"
+                  label="Comrade is thinking"
+                />
+                <div className="flex max-w-[80%] items-center rounded-2xl bg-muted px-4 py-3 text-muted-foreground md:max-w-[70%]">
+                  <span className="text-sm font-medium">Comrade is thinking…</span>
                 </div>
               </div>
-              <div className="space-y-3">
-                <div className="text-sm text-muted-foreground text-center">Try asking about:</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {suggestedPrompts.map((prompt, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setMessageInput(prompt)}
-                      className="px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 rounded-xl text-sm text-left transition"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          ) : (
-            messages.map((msg) => (
-              <ChatMessage
-                key={msg.message_id}
-                message={msg}
-                typewriter={msg.message_id === typingId}
-                onGrow={scrollToEnd}
+            )}
+
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* ── Composer ───────────────────────────────────────────── */}
+          <div className="border-t border-border/60 bg-card p-4 md:p-6">
+            <div className="flex gap-3">
+              <label htmlFor="chat-input" className="sr-only">
+                Message Comrade
+              </label>
+              <input
+                id="chat-input"
+                type="text"
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Share what's on your mind... This is a safe space."
+                className="flex-1 rounded-xl border border-border bg-input-background px-4 py-3 focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={isSending}
               />
-            ))
-          )}
-
-          {/* Comrade is thinking indicator */}
-          {isSending && (
-            <div className="flex justify-start">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5A6BFF] to-[#232B6D] flex items-center justify-center flex-shrink-0 mt-1 mr-2">
-                <Brain className="w-4 h-4 text-white" />
-              </div>
-              <div className="max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 bg-muted text-muted-foreground flex items-center gap-3">
-                <span className="text-sm font-medium">Comrade is thinking</span>
-                <span className="flex gap-1">
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={handleSendMessage}
+                disabled={!messageInput.trim() || isSending}
+                aria-label="Send message"
+                className="rounded-xl bg-primary px-6 py-3 text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send className="h-5 w-5" />
+              </button>
             </div>
-          )}
-
-          <div ref={chatEndRef} />
-        </div>
-
-        {/* Input Area */}
-        <div className="p-4 md:p-6 border-t border-border bg-card">
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={messageInput}
-              onChange={(e) => setMessageInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Share what's on your mind... This is a safe space."
-              className="flex-1 px-4 py-3 bg-input-background rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-ring"
-              disabled={isSending}
-            />
-            <button className="p-3 bg-muted hover:bg-muted/80 rounded-xl transition">
-              <Mic className="w-5 h-5" />
-            </button>
-            <button
-              onClick={handleSendMessage}
-              disabled={!messageInput.trim() || isSending}
-              className="px-6 py-3 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Send className="w-5 h-5" />
-            </button>
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              Your conversations are private and encrypted. Parents receive insights, not
+              raw chats.
+            </p>
+            <Disclaimer variant="short" className="mt-2 justify-center text-center" />
           </div>
-          <div className="mt-3 text-xs text-muted-foreground text-center">
-            Your conversations are private and encrypted. Parents receive insights, not raw chats.
-          </div>
-          <Disclaimer variant="short" className="mt-2 justify-center text-center" />
-
-
         </div>
       </div>
-    </div>
+    </StudentLayout>
   );
 }
