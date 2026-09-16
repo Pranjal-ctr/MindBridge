@@ -271,6 +271,27 @@ are public on every environment.
 
 ---
 
+## 8a. Counselors must be assigned to a school
+
+Counselors registered at `/admin/counselors` belong to the **platform** tenant,
+because booking is platform-wide — any student may book any verified counselor.
+Alerting, however, is school-scoped. The join between the two is
+`counselor_school_assignments`, set when you register a counselor (`tenant_ids`)
+or afterwards via `PUT /admin/counselors/{counselor_id}/schools`.
+
+A counselor with no assignment is registered, verified, bookable — and receives
+**nothing**: no crisis notification, no keyword tripwire, an empty risk queue
+and an empty roster. Check after provisioning:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+     https://kio-api.onrender.com/admin/counselors/$COUNSELOR_ID/schools
+```
+
+An empty `tenant_ids` is the answer you do not want.
+
+---
+
 ## 9. Smoke test
 
 Run against the deployed origins after every release.

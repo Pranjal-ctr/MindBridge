@@ -101,15 +101,17 @@ class AuditAction:
     SCHOOL_ACTIVATED = "tenant.activate"
     SCHOOL_SUSPENDED = "tenant.suspend"
     SCHOOL_ARCHIVED = "tenant.archive"     # pre-existing
-    # The four below are declared but not yet emitted: the operations they
-    # describe do not exist in the codebase. A user's school is set at
-    # creation and never changed, and counselor_school_assignments is only
-    # ever read (by analytics), never written through an endpoint. They are
-    # kept here so that whoever builds those operations wires the event at the
-    # same time, rather than inventing a fifth spelling. See
-    # docs/audit-logging.md, "Declared but not emitted".
+    # The first two are declared but not yet emitted: a user's school is set
+    # at creation and never changed, so the operation does not exist. They are
+    # kept so whoever builds it wires the event rather than inventing a fifth
+    # spelling. See docs/audit-logging.md, "Declared but not emitted".
     USER_ASSIGNED_TO_SCHOOL = "tenant.user_assigned"
     USER_REMOVED_FROM_SCHOOL = "tenant.user_removed"
+    # These two ARE emitted, by PUT /admin/counselors/{id}/schools. They stopped
+    # being decorative when counselor_school_assignments became the join that
+    # decides who receives a school's risk alerts: removing the last assignment
+    # silently stops a counselor's alerts, which is exactly the kind of change
+    # that has to leave a trace.
     COUNSELOR_ASSIGNED = "counselor.assigned"
     COUNSELOR_UNASSIGNED = "counselor.unassigned"
     COUNSELOR_REGISTERED = "counselor.register"

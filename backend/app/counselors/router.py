@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.conversations.service import get_student_id_for_user
+from app.counselors.assignments import scope_tenant_ids
 from app.dependencies import CurrentTenant, CurrentUser, require_role
 from app.counselors.schemas import (
     AvailabilityCreate,
@@ -221,12 +222,13 @@ async def remove_availability(
 )
 async def get_students(
     current_user: CurrentUser,
-    tenant_id: CurrentTenant,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """List students in the counselor's tenant with risk profiles."""
+    """List students at the schools this counselor serves, with risk profiles."""
     counselor_id = await get_counselor_id(db, current_user.user_id)
-    students, total = await list_counselor_students(db, counselor_id, tenant_id)
+    students, total = await list_counselor_students(
+        db, counselor_id, await scope_tenant_ids(db, current_user)
+    )
     return StudentListResponse(students=students, total=total)
 
 

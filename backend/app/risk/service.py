@@ -5,6 +5,7 @@ Kio Risk Service
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request, status
@@ -77,15 +78,20 @@ async def list_risk_assessments(
 
 
 async def get_active_risk_alerts(
-    db: AsyncSession, tenant_id: uuid.UUID
+    db: AsyncSession, tenant_ids: Sequence[uuid.UUID]
 ) -> tuple[list[RiskAlertResponse], int]:
-    """Get active high-risk alerts for a tenant (counselor view)."""
+    """Active high-risk alerts across the schools the viewer serves.
+
+    Takes a set of schools rather than one: a platform counselor serves the
+    schools they are assigned to, not the tenant their own account sits in.
+    See app/counselors/assignments.py.
+    """
     query = (
         select(RiskAssessment, StudentProfile, User)
         .join(StudentProfile, RiskAssessment.student_id == StudentProfile.student_id)
         .join(User, StudentProfile.user_id == User.user_id)
         .where(
-            User.tenant_id == tenant_id,
+            User.tenant_id.in_(tenant_ids),
             RiskAssessment.risk_level.in_(["red", "critical"]),
         )
         .order_by(RiskAssessment.created_at.desc())
@@ -124,9 +130,14 @@ _LEVEL_SEVERITY = case(
 
 
 async def get_risk_queue(
-    db: AsyncSession, tenant_id: uuid.UUID
+    db: AsyncSession, tenant_ids: Sequence[uuid.UUID]
 ) -> tuple[list[RiskQueueItem], int]:
-    """Pending assessments for the tenant, most severe first, then newest."""
+    """Pending assessments for the viewer's schools, most severe first.
+
+    Scoped to every school the viewer serves. Scoping to their own tenant
+    alone returned an empty queue for every counselor registered through
+    /admin/counselors, because those accounts live in the platform tenant.
+    """
     from app.intelligence.config import load_config
 
     min_confidence = float((await load_config(db, "safety_floors"))["min_confidence"])
@@ -136,7 +147,7 @@ async def get_risk_queue(
         .join(StudentProfile, RiskAssessment.student_id == StudentProfile.student_id)
         .join(User, StudentProfile.user_id == User.user_id)
         .where(
-            User.tenant_id == tenant_id,
+            User.tenant_id.in_(tenant_ids),
             RiskAssessment.review_status == "pending",
         )
         .order_by(_LEVEL_SEVERITY.desc(), RiskAssessment.created_at.desc())
@@ -168,22 +179,27 @@ async def get_risk_queue(
 async def review_risk_assessment(
     db: AsyncSession,
     risk_id: uuid.UUID,
-    tenant_id: uuid.UUID,
+    tenant_ids: Sequence[uuid.UUID],
     reviewer_user_id: uuid.UUID,
     payload: RiskReviewUpdate,
     reviewer_role: str | None = None,
     request: Request | None = None,
 ) -> RiskAssessmentResponse:
     """Acknowledge or resolve a queued assessment (tenant-scoped, audit-logged)."""
+    # The student's school comes back with the row. The audit event belongs to
+    # the school the assessment is about, which is no longer the same as the
+    # reviewer's own tenant: a platform counselor reviewing a case serves that
+    # school without belonging to it.
     result = await db.execute(
-        select(RiskAssessment)
+        select(RiskAssessment, User.tenant_id)
         .join(StudentProfile, RiskAssessment.student_id == StudentProfile.student_id)
         .join(User, StudentProfile.user_id == User.user_id)
-        .where(RiskAssessment.risk_id == risk_id, User.tenant_id == tenant_id)
+        .where(RiskAssessment.risk_id == risk_id, User.tenant_id.in_(tenant_ids))
     )
-    assessment = result.scalar_one_or_none()
-    if assessment is None:
+    row = result.one_or_none()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    assessment, student_tenant_id = row
     if assessment.review_status is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Assessment is not in the review queue"
@@ -223,7 +239,7 @@ async def review_risk_assessment(
         },
         request=request,
         actor_role=reviewer_role,
-        tenant_id=tenant_id,
+        tenant_id=student_tenant_id,
         severity=AuditSeverity.NOTICE,
     )
     await db.refresh(assessment)

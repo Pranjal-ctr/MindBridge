@@ -260,6 +260,17 @@ export interface CounselorCreatePayload {
   specializations?: string[];
   languages?: string[];
   experience_years?: number;
+  /**
+   * Schools this counselor serves. Not cosmetic: risk queue, roster, keyword
+   * tripwire and crisis fan-out all resolve through these, so a counselor
+   * registered with none receives no alerts at all.
+   */
+  tenant_ids?: string[];
+}
+
+export interface CounselorSchools {
+  counselor_id: string;
+  tenant_ids: string[];
 }
 
 export interface CounselorAdminUpdatePayload {

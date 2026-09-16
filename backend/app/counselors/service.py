@@ -5,6 +5,7 @@ Kio Counselors Service
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -50,14 +51,18 @@ async def get_counselor_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
 
 
 async def list_counselor_students(
-    db: AsyncSession, counselor_id: uuid.UUID, tenant_id: uuid.UUID
+    db: AsyncSession, counselor_id: uuid.UUID, tenant_ids: Sequence[uuid.UUID]
 ) -> tuple[list[StudentCounselorProfile], int]:
-    """List students that have had sessions with this counselor (or in the same tenant)."""
-    # Get students in the same tenant
+    """Students at every school this counselor serves, highest risk first.
+
+    Scoped to the counselor's assigned schools rather than the tenant their
+    own account belongs to -- a platform counselor's own tenant contains no
+    students at all, so the roster came back empty.
+    """
     query = (
         select(StudentProfile, User)
         .join(User, StudentProfile.user_id == User.user_id)
-        .where(User.tenant_id == tenant_id)
+        .where(User.tenant_id.in_(tenant_ids))
         .order_by(
             # High-risk students first
             StudentProfile.risk_level.desc(),

@@ -25,6 +25,7 @@ from app.audit_actions import (
     AuditResult,
     AuditSeverity,
 )
+from app.counselors.assignments import staff_user_ids_for_tenant
 from app.intelligence.analysis import AnalysisOutcome
 from app.intelligence.config import load_config
 from app.notifications.service import notify_users
@@ -173,15 +174,12 @@ async def evaluate_and_trigger_crisis(
         )).scalar_one_or_none()
 
         if student_user is not None:
-            staff_ids = [
-                row[0] for row in (await db.execute(
-                    select(User.user_id).where(
-                        User.tenant_id == student_user.tenant_id,
-                        User.role.in_(["counselor", "school_admin"]),
-                        User.is_active == True,  # noqa: E712
-                    )
-                )).all()
-            ]
+            # Staff in the student's own school PLUS platform counselors
+            # assigned to it. Scoping on tenant alone silently excluded every
+            # counselor registered through /admin/counselors, who live in the
+            # platform tenant -- so an alert could fan out to nobody and record
+            # recipient_count: 0 without anything reporting a problem.
+            staff_ids = await staff_user_ids_for_tenant(db, student_user.tenant_id)
             student_name = f"{student_user.first_name} {student_user.last_name}".strip()
 
             if staff_ids:

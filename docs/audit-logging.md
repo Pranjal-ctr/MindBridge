@@ -239,11 +239,18 @@ operations themselves do not exist in the codebase yet:**
 | Constant | Why not emitted |
 |---|---|
 | `USER_ASSIGNED_TO_SCHOOL`, `USER_REMOVED_FROM_SCHOOL` | A user's school is set at creation and never changed. There is no reassignment endpoint. |
-| `COUNSELOR_ASSIGNED`, `COUNSELOR_UNASSIGNED` | `counselor_school_assignments` is only ever *read* (by analytics). No endpoint writes it. |
 | `RISK_CASE_ASSIGNED` | `risk_assessments` has no assignee column. |
 | `BOOKING_RESCHEDULED` | Rescheduling is done as cancel + book; both halves are already audited. |
 | `COMRADE_SAFETY_TRIGGERED` | Realised as `safety_event:<category>`, which predates this module and is what existing rows use. Emitting both would mean two rows for one event. |
 | `RISK_CASE_RESOLVED` | Realised as `risk_review:<status>`, which carries the counselor verdict alongside it. |
+
+`COUNSELOR_ASSIGNED` and `COUNSELOR_UNASSIGNED` **are** emitted as of the
+pre-pilot fixes, by `PUT /admin/counselors/{counselor_id}/schools`. One row per
+school added or removed, carrying the counselor id and the school as
+`tenant_id` — never a name. They matter because
+`counselor_school_assignments` is now the join that decides who receives a
+school's risk alerts: removing the last assignment silently stops a counselor's
+alerts, and that must leave a trace.
 
 ---
 

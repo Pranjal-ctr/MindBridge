@@ -261,15 +261,13 @@ async def _raise_keyword_tripwire(
     if RISK_LEVEL_RANK.get(level, 0) > RISK_LEVEL_RANK.get(profile.risk_level or "green", 0):
         profile.risk_level = level
 
-    # Alert tenant counselors + school admins (content-free)
-    staff_result = await db.execute(
-        select(User.user_id).where(
-            User.tenant_id == student_user.tenant_id,
-            User.role.in_(["counselor", "school_admin"]),
-            User.is_active == True,  # noqa: E712
-        )
-    )
-    staff_ids = [r[0] for r in staff_result.all()]
+    # Alert the school's staff (content-free). Same recipient rule as the
+    # crisis fan-out, from the same helper: a counselor registered through
+    # /admin/counselors lives in the platform tenant, so a tenant-only query
+    # here sent the instant tripwire to nobody.
+    from app.counselors.assignments import staff_user_ids_for_tenant
+
+    staff_ids = await staff_user_ids_for_tenant(db, student_user.tenant_id)
     if staff_ids:
         await notify_users(
             db, staff_ids,

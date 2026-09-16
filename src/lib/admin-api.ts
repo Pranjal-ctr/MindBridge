@@ -30,6 +30,7 @@ import type {
   CounselorAdmin,
   CounselorAdminUpdatePayload,
   CounselorCreatePayload,
+  CounselorSchools,
   CounselorListResponse,
   PlatformAnalytics,
   PlatformConfigEntry,
@@ -167,6 +168,28 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalytics> {
 }
 
 // ── Counselors ────────────────────────────────────────────────────────
+
+/** Which schools a counselor serves. */
+export async function getCounselorSchools(
+  counselorId: string,
+): Promise<CounselorSchools> {
+  const { data } = await api.get<CounselorSchools>(
+    `/admin/counselors/${counselorId}/schools`,
+  );
+  return data;
+}
+
+/** Replace the set of schools a counselor serves. */
+export async function setCounselorSchools(
+  counselorId: string,
+  tenantIds: string[],
+): Promise<CounselorSchools> {
+  const { data } = await api.put<CounselorSchools>(
+    `/admin/counselors/${counselorId}/schools`,
+    { tenant_ids: tenantIds },
+  );
+  return data;
+}
 
 export async function listCounselors(): Promise<CounselorListResponse> {
   const { data } = await api.get<CounselorListResponse>('/admin/counselors');

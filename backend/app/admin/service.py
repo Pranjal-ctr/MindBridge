@@ -14,10 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.errors import AIError
 from app.config import settings
+from app.counselors.assignments import set_assignments
 from app.audit import log_audit, log_audit_detached
 from app.audit_actions import AuditAction, AuditEntity, AuditResult, AuditSeverity
 from app.admin.schemas import (
     AdminRiskDetail,
+    CounselorSchoolsResponse,
+    CounselorSchoolsUpdate,
     AIConfigResponse,
     AIConfigUpdate,
     AIProviderHealth,
@@ -66,6 +69,7 @@ from database.models import (
     AuditLog,
     Conversation,
     CounselorProfile,
+    CounselorSchoolAssignment,
     Message,
     ParentProfile,
     PlatformConfig,
@@ -780,14 +784,116 @@ async def create_counselor(
     )
     db.add(counselor)
     await db.flush()
+
+    # Which schools this counselor serves. Without at least one, every
+    # alerting and queue query excludes them -- see app/counselors/assignments.
+    if payload.tenant_ids:
+        await _assert_tenants_exist(db, payload.tenant_ids)
+        await set_assignments(
+            db, counselor.counselor_id, payload.tenant_ids, assigned_by=actor_id
+        )
+
     await log_audit(
         db, user_id=actor_id, action=AuditAction.COUNSELOR_REGISTERED,
         entity_type=AuditEntity.COUNSELOR, entity_id=counselor.counselor_id,
-        details={"email": user.email, "is_verified": counselor.is_verified},
+        details={
+            "email": user.email,
+            "is_verified": counselor.is_verified,
+            # Count, not ids: the question after the fact is whether anyone
+            # remembered to assign them, and zero is the answer that matters.
+            "schools_assigned": len(payload.tenant_ids),
+        },
         request=request, actor_role="admin", tenant_id=user.tenant_id,
         severity=AuditSeverity.NOTICE,
     )
     return _counselor_to_admin_response(counselor, user)
+
+
+async def _assert_tenants_exist(db: AsyncSession, tenant_ids: list[uuid.UUID]) -> None:
+    """422 rather than a foreign-key 500 on a mistyped school id."""
+    found = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(Tenant.tenant_id).where(Tenant.tenant_id.in_(tenant_ids))
+            )
+        ).all()
+    }
+    missing = [str(t) for t in tenant_ids if t not in found]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown school id(s): {', '.join(missing)}",
+        )
+
+
+async def get_counselor_schools(
+    db: AsyncSession, counselor_id: uuid.UUID
+) -> CounselorSchoolsResponse:
+    """The schools a counselor currently serves."""
+    await _get_counselor_or_404(db, counselor_id)
+    result = await db.execute(
+        select(CounselorSchoolAssignment.tenant_id).where(
+            CounselorSchoolAssignment.counselor_id == counselor_id
+        )
+    )
+    return CounselorSchoolsResponse(
+        counselor_id=counselor_id, tenant_ids=[row[0] for row in result.all()]
+    )
+
+
+async def update_counselor_schools(
+    db: AsyncSession,
+    counselor_id: uuid.UUID,
+    payload: CounselorSchoolsUpdate,
+    actor_id: uuid.UUID | None = None,
+    request: Request | None = None,
+) -> CounselorSchoolsResponse:
+    """Replace the set of schools a counselor serves.
+
+    This is what makes a platform counselor reachable by a school's students:
+    risk queue, roster, keyword tripwire and crisis fan-out all resolve through
+    these rows. Removing the last one silently stops their alerts, so both
+    directions of the change are audited.
+    """
+    await _get_counselor_or_404(db, counselor_id)
+    if payload.tenant_ids:
+        await _assert_tenants_exist(db, payload.tenant_ids)
+
+    added, removed = await set_assignments(
+        db, counselor_id, payload.tenant_ids, assigned_by=actor_id
+    )
+
+    for action, changed in (
+        (AuditAction.COUNSELOR_ASSIGNED, added),
+        (AuditAction.COUNSELOR_UNASSIGNED, removed),
+    ):
+        for tenant_id in changed:
+            await log_audit(
+                db, user_id=actor_id, action=action,
+                entity_type=AuditEntity.COUNSELOR, entity_id=counselor_id,
+                request=request, actor_role="admin", tenant_id=tenant_id,
+                severity=AuditSeverity.NOTICE,
+            )
+
+    return CounselorSchoolsResponse(
+        counselor_id=counselor_id, tenant_ids=list(payload.tenant_ids)
+    )
+
+
+async def _get_counselor_or_404(
+    db: AsyncSession, counselor_id: uuid.UUID
+) -> CounselorProfile:
+    counselor = (
+        await db.execute(
+            select(CounselorProfile).where(CounselorProfile.counselor_id == counselor_id)
+        )
+    ).scalar_one_or_none()
+    if counselor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Counselor not found"
+        )
+    return counselor
 
 
 async def list_counselors(db: AsyncSession) -> CounselorListResponse:

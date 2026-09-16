@@ -16,9 +16,10 @@ import {
   apiErrorDetail,
   createCounselor,
   listCounselors,
+  listSchools,
   updateCounselor,
 } from '../../../../lib/admin-api';
-import type { CounselorAdmin } from '../../../../lib/admin-types';
+import type { CounselorAdmin, TenantRow } from '../../../../lib/admin-types';
 import { Button } from '../../ui/button';
 import {
   Dialog,
@@ -43,6 +44,8 @@ interface NewCounselorForm {
   phone: string;
   qualification: string;
   experience_years: string;
+  /** Schools this counselor will serve. Empty means they get no alerts. */
+  tenant_ids: string[];
 }
 
 const EMPTY_FORM: NewCounselorForm = {
@@ -53,6 +56,7 @@ const EMPTY_FORM: NewCounselorForm = {
   phone: '',
   qualification: '',
   experience_years: '',
+  tenant_ids: [],
 };
 
 export function CounselorsPage() {
@@ -68,6 +72,10 @@ export function CounselorsPage() {
 
   const [verifyTarget, setVerifyTarget] = useState<CounselorAdmin | null>(null);
 
+  // Schools to choose from when registering. Loaded once with the roster; the
+  // list is small (one row per school on the platform).
+  const [schools, setSchools] = useState<TenantRow[]>([]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -79,6 +87,23 @@ export function CounselorsPage() {
       setLoading(false);
     }
   }, []);
+
+  // Schools for the assignment picker. Failing to load them must not block
+  // registration, so this only disables the picker and says why.
+  const [schoolsError, setSchoolsError] = useState(false);
+  const loadSchools = useCallback(async () => {
+    try {
+      const data = await listSchools(1, 100);
+      setSchools(data.tenants);
+      setSchoolsError(false);
+    } catch {
+      setSchoolsError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSchools();
+  }, [loadSchools]);
 
   useEffect(() => {
     load();
@@ -109,8 +134,13 @@ export function CounselorsPage() {
         ...(form.experience_years
           ? { experience_years: Number(form.experience_years) }
           : {}),
+        tenant_ids: form.tenant_ids,
       });
-      toast.success('Counselor registered. They still need verifying before they appear in the directory.');
+      toast.success(
+        form.tenant_ids.length
+          ? 'Counselor registered. They still need verifying before they appear in the directory.'
+          : 'Counselor registered with no school — they will receive no risk alerts until you assign one.',
+      );
       setAddOpen(false);
       setForm(EMPTY_FORM);
       load();
@@ -298,6 +328,72 @@ export function CounselorsPage() {
                 onChange={(e) => setForm({ ...form, experience_years: e.target.value })}
               />
             </div>
+
+            {/* Schools served.
+                A counselor is registered into the platform tenant, because
+                booking is platform-wide. Alerting is not: the risk queue, the
+                roster, the keyword tripwire and the crisis fan-out all resolve
+                through these assignments. Leaving this empty registers a
+                counselor who is bookable and verified but receives nothing —
+                which is why the consequence is spelled out here rather than
+                left to the operator to discover during an incident. */}
+            <fieldset className="space-y-1.5 sm:col-span-2">
+              <legend className="text-sm font-medium">Schools served</legend>
+              <p className="text-xs text-muted-foreground">
+                Risk alerts, the review queue and the student roster all follow
+                this. A counselor with no school receives none of them.
+              </p>
+              {schoolsError ? (
+                <p className="text-xs text-destructive">
+                  Couldn&apos;t load schools.{' '}
+                  <button
+                    type="button"
+                    onClick={loadSchools}
+                    className="underline underline-offset-2"
+                  >
+                    Try again
+                  </button>{' '}
+                  — or assign them after registering.
+                </p>
+              ) : schools.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No schools yet. Register one first, then assign this counselor.
+                </p>
+              ) : (
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
+                  {schools.map((school) => {
+                    const checked = form.tenant_ids.includes(school.tenant_id);
+                    return (
+                      <label
+                        key={school.tenant_id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted/60"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              tenant_ids: e.target.checked
+                                ? [...form.tenant_ids, school.tenant_id]
+                                : form.tenant_ids.filter(
+                                    (id) => id !== school.tenant_id,
+                                  ),
+                            })
+                          }
+                        />
+                        <span className="min-w-0 truncate">{school.tenant_name}</span>
+                        {school.school_code && (
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {school.school_code}
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </fieldset>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="qualification">Qualification</Label>
               <Input

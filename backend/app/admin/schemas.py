@@ -231,6 +231,22 @@ class CounselorCreate(BaseModel):
     languages: list[str] = []
     experience_years: int | None = Field(None, ge=0)
     is_verified: bool = False
+    #: Schools this counselor serves. Empty is accepted (a counselor can be
+    #: registered before their schools are known) but means they receive no
+    #: risk queue, no roster and no crisis alerts until assigned -- which the
+    #: admin UI states, because silently registering an unreachable counselor
+    #: is the failure this field exists to prevent.
+    tenant_ids: list[uuid.UUID] = []
+
+
+class CounselorSchoolsUpdate(BaseModel):
+    """Replace the set of schools a counselor serves."""
+    tenant_ids: list[uuid.UUID]
+
+
+class CounselorSchoolsResponse(BaseModel):
+    counselor_id: uuid.UUID
+    tenant_ids: list[uuid.UUID]
 
 
 class CounselorAdminUpdate(BaseModel):

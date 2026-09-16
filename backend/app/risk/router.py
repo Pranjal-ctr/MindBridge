@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_audit
 from app.audit_actions import AuditAction, AuditEntity, AuditSeverity
+from app.counselors.assignments import scope_tenant_ids
 from app.dependencies import CurrentTenant, CurrentUser, require_role
 from app.risk.schemas import (
     RiskAlertListResponse,
@@ -85,11 +86,11 @@ async def get_assessments(
     dependencies=[Depends(require_role("counselor", "school_admin", "admin"))],
 )
 async def get_alerts(
-    tenant_id: CurrentTenant,
     db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User, Depends(require_role("counselor", "school_admin", "admin"))],
 ):
-    """Get active high-risk alerts for the current tenant."""
-    alerts, total = await get_active_risk_alerts(db, tenant_id)
+    """Active high-risk alerts for every school the viewer serves."""
+    alerts, total = await get_active_risk_alerts(db, await scope_tenant_ids(db, viewer))
     return RiskAlertListResponse(alerts=alerts, total=total)
 
 
@@ -103,13 +104,12 @@ async def get_alerts(
     dependencies=[Depends(require_role("counselor", "school_admin", "admin"))],
 )
 async def get_review_queue(
-    tenant_id: CurrentTenant,
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User, Depends(require_role("counselor", "school_admin", "admin"))],
 ):
     """Pending AI/tripwire assessments awaiting review (most severe first)."""
-    items, total = await get_risk_queue(db, tenant_id)
+    items, total = await get_risk_queue(db, await scope_tenant_ids(db, viewer))
     await log_audit(
         db,
         user_id=viewer.user_id,
@@ -130,13 +130,12 @@ async def get_review_queue(
 async def review_queued_assessment(
     risk_id: uuid.UUID,
     payload: RiskReviewUpdate,
-    tenant_id: CurrentTenant,
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     reviewer: Annotated[User, Depends(require_role("counselor", "school_admin", "admin"))],
 ):
     """Acknowledge or resolve a queued assessment."""
     return await review_risk_assessment(
-        db, risk_id, tenant_id, reviewer.user_id, payload,
+        db, risk_id, await scope_tenant_ids(db, reviewer), reviewer.user_id, payload,
         reviewer_role=reviewer.role, request=request,
     )

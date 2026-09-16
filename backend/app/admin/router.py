@@ -30,6 +30,8 @@ from app.admin.schemas import (
     BreakGlassMessageList,
     CounselorAdminResponse,
     CounselorAdminUpdate,
+    CounselorSchoolsResponse,
+    CounselorSchoolsUpdate,
     CounselorCreate,
     CounselorListResponse,
     PlatformAnalytics,
@@ -54,7 +56,9 @@ from app.audit import log_audit
 from app.audit_actions import AuditAction, AuditEntity, AuditSeverity
 from app.admin.service import (
     get_ai_config,
+    get_counselor_schools,
     update_ai_config,
+    update_counselor_schools,
     activate_prompt,
     get_admin_risk_detail,
     list_admin_risk,
@@ -377,6 +381,43 @@ async def edit_counselor(
 ):
     """Edit a counselor: profile, verify credentials, activate/deactivate, availability."""
     return await update_counselor(
+        db, counselor_id, payload, actor_id=admin.user_id, request=request
+    )
+
+
+@router.get(
+    "/counselors/{counselor_id}/schools",
+    response_model=CounselorSchoolsResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def read_counselor_schools(
+    counselor_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Which schools this counselor serves. Platform admin only."""
+    return await get_counselor_schools(db, counselor_id)
+
+
+@router.put(
+    "/counselors/{counselor_id}/schools",
+    response_model=CounselorSchoolsResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def write_counselor_schools(
+    counselor_id: uuid.UUID,
+    payload: CounselorSchoolsUpdate,
+    admin: AdminUser,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Replace the set of schools a counselor serves. Platform admin only.
+
+    These assignments are what put a platform counselor in front of a school's
+    students: the risk queue, the roster, the keyword tripwire and the crisis
+    fan-out all resolve through them. A counselor with none receives no alerts
+    at all, which is why the empty set is allowed but audited.
+    """
+    return await update_counselor_schools(
         db, counselor_id, payload, actor_id=admin.user_id, request=request
     )
 
