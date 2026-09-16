@@ -40,6 +40,25 @@ const api = axios.create({
   timeout: 15000,
 });
 
+/**
+ * Timeout for a request that waits on a model, in milliseconds.
+ *
+ * The global 15s above is right for ordinary CRUD and deliberately unchanged.
+ * It is far too short for a chat turn: the backend allows each provider call
+ * `AI_REQUEST_TIMEOUT_SECONDS` (30s by default) and retries a retryable
+ * failure up to `max_retries` (2), so a slow-but-successful reply can take
+ * ~90s server-side.
+ *
+ * Aborting at 15s did not cancel any of that. The server carried on, stored
+ * the AI message, and the student was shown a failure for a reply that exists
+ * — visible on their next refresh. This ceiling is the server's worst case
+ * plus a small margin, so the client gives up only after the server has.
+ *
+ * Keep in step with AI_REQUEST_TIMEOUT_SECONDS x (1 + max_retries) if either
+ * changes.
+ */
+export const AI_REQUEST_TIMEOUT_MS = 95_000;
+
 // ── Request Interceptor: Attach Authorization header ──────────────────
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {

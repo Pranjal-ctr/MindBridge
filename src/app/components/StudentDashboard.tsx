@@ -84,8 +84,14 @@ export function StudentDashboard() {
   }, [fetchCheckinStatus]);
 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const { messages, isLoading: msgsLoading, isSending, sendMessage } =
-    useMessages(activeConversationId);
+  const {
+    messages,
+    isLoading: msgsLoading,
+    isSending,
+    sendError,
+    clearSendError,
+    sendMessage,
+  } = useMessages(activeConversationId);
   const { refetch: refetchWellness } = useWellnessScore();
 
   const [messageInput, setMessageInput] = useState('');
@@ -147,7 +153,11 @@ export function StudentDashboard() {
       // response returns, so give it a moment before pulling the updated score.
       setTimeout(() => refetchWellness(), 8000);
     } catch {
-      // Error is handled by the hook
+      // Put the message back in the box. The hook has already rolled the
+      // optimistic bubble out of the transcript and set `sendError`, so
+      // without this the student's words would exist nowhere at all — which
+      // is exactly what used to happen.
+      setMessageInput((current) => (current.trim() ? current : text));
     }
   };
 
@@ -319,6 +329,29 @@ export function StudentDashboard() {
 
           {/* ── Composer ───────────────────────────────────────────── */}
           <div className="border-t border-border/60 bg-card p-4 md:p-6">
+            {/* A failed send is announced, not swallowed. `assertive` because
+                the transcript has just changed underneath a screen-reader user
+                — their message was removed and nothing replaced it. */}
+            {sendError && (
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-destructive/[0.07] px-4 py-3 text-sm text-destructive"
+              >
+                <span className="min-w-0 flex-1">{sendError}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearSendError();
+                    handleSendMessage();
+                  }}
+                  disabled={!messageInput.trim() || isSending}
+                  className="shrink-0 rounded-lg px-2.5 py-1 font-medium underline-offset-2 transition hover:bg-destructive/10 hover:underline disabled:opacity-50"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
             <div className="flex gap-3">
               <label htmlFor="chat-input" className="sr-only">
                 Message Comrade

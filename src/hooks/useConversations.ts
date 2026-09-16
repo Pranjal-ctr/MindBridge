@@ -4,7 +4,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import api from '../lib/api';
+import api, { AI_REQUEST_TIMEOUT_MS } from '../lib/api';
+import { chatErrorMessage } from '../lib/chat-errors';
 import type {
   ConversationListResponse,
   ConversationResponse,
@@ -73,6 +74,10 @@ export function useMessages(conversationId: string | null) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error`, which describes a failed *load*. A send failure
+  // needs its own slot so retrying the send can clear it without hiding a
+  // transcript that never arrived.
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) {
@@ -128,10 +133,14 @@ export function useMessages(conversationId: string | null) {
       setMessages((prev) => [...prev, optimistic]);
 
       setIsSending(true);
+      setSendError(null);
       try {
         const { data } = await api.post<SendMessageResponse>(
           `/conversations/${conversationId}/messages`,
-          payload
+          payload,
+          // Waits on the model: the global timeout would abort a reply the
+          // server is still legitimately working on. See AI_REQUEST_TIMEOUT_MS.
+          { timeout: AI_REQUEST_TIMEOUT_MS },
         );
 
         // Swap the optimistic bubble for the server's user message + AI reply.
@@ -140,10 +149,15 @@ export function useMessages(conversationId: string | null) {
           data.user_message,
           data.ai_message,
         ]);
+        setSendError(null);
         return data;
       } catch (err) {
-        // Roll back the optimistic message if the send failed.
+        // Roll back the optimistic bubble and say why. Without the message the
+        // student watched their own words disappear with no explanation — the
+        // worst thing this screen can do, and the reason the daily-limit 429
+        // was never seen by anyone.
         setMessages((prev) => prev.filter((m) => m.message_id !== tempId));
+        setSendError(chatErrorMessage(err));
         throw err;
       } finally {
         setIsSending(false);
@@ -157,6 +171,8 @@ export function useMessages(conversationId: string | null) {
     isLoading,
     isSending,
     error,
+    sendError,
+    clearSendError: useCallback(() => setSendError(null), []),
     sendMessage,
     refetch: fetchMessages,
   };
