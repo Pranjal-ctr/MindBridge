@@ -1,10 +1,12 @@
 #!/bin/sh
 # Kio Backend container entrypoint.
 #
-#   serve     (default) optionally migrate, then run the API
-#   migrate   run `alembic upgrade head` and exit — for a release/pre-deploy job
-#   seed      load demo data and exit — NEVER run against production
-#   <other>   exec'd verbatim, so `docker run kio-api sh` still works
+#   serve      (default) optionally migrate, then run the API
+#   migrate    run `alembic upgrade head` and exit — for a release/pre-deploy job
+#   seed       load demo data and exit — NEVER run against production
+#   bootstrap  create the FIRST school + platform admin — safe in production,
+#              refuses once any admin exists
+#   <other>    exec'd verbatim, so `docker run kio-api sh` still works
 #
 set -eu
 
@@ -34,6 +36,17 @@ case "${1:-serve}" in
         run_migrations
         echo "==> seeding demo data"
         python -m database.seed
+        ;;
+
+    bootstrap)
+        # The first school and the first platform admin, for a production
+        # database where `seed` is (correctly) refused. Unlike seed this is
+        # safe in production: it creates exactly one account, from credentials
+        # the operator supplies in the environment, and refuses outright once
+        # any admin exists. See database/bootstrap.py.
+        run_migrations
+        echo "==> bootstrapping first school + platform admin"
+        python -m database.bootstrap
         ;;
 
     serve)

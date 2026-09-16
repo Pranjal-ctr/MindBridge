@@ -118,6 +118,18 @@ opened a second route would fail the suite rather than ship.
 
 ---
 
+## First-run bootstrap
+
+`python -m database.bootstrap` creates the first school and platform admin from
+`BOOTSTRAP_*` environment variables, and **refuses once any admin exists**. It
+is the only supported way to get an admin account into a production database,
+because seeding is refused there. Full steps: `docs/deployment.md` §5a.
+
+It is not an HTTP endpoint and must not become one. The guard, the password
+rules and the absence of a route are covered by `backend/tests/test_bootstrap.py`.
+
+---
+
 ## Seeding
 
 `database/seed.py` creates one account per role — platform admin included —

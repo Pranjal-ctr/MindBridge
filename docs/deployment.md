@@ -172,6 +172,60 @@ but are not exercised. To undo a bad schema change, restore from backup
 
 ---
 
+## 5a. First run: bootstrap the school and platform admin
+
+A freshly migrated production database has **no tenant and no user**, and every
+route in is closed: `seed` is refused in production (it creates demo accounts
+sharing a password published in this repository), self-signup is student/parent
+only and requires a school code that resolves to an existing tenant, and every
+`/admin/*` endpoint requires a role nobody holds yet.
+
+Run this **once**, from a shell on the API service (Render: *Shell* tab;
+Docker: `docker compose run --rm api sh`):
+
+```bash
+BOOTSTRAP_ADMIN_EMAIL=you@yourschool.example \
+BOOTSTRAP_ADMIN_PASSWORD='<a password you have never committed>' \
+BOOTSTRAP_SCHOOL_NAME='Pilot School' \
+BOOTSTRAP_SCHOOL_CODE=PILOT2026 \
+python -m database.bootstrap
+```
+
+Or, as a container command, which migrates first:
+
+```bash
+docker run --rm --env-file .env -e BOOTSTRAP_ADMIN_EMAIL=... kio-api bootstrap
+```
+
+Optional: `BOOTSTRAP_ADMIN_FIRST_NAME`, `BOOTSTRAP_ADMIN_LAST_NAME`.
+
+What it does and does not do:
+
+| | |
+|---|---|
+| Creates | One school (reusing an existing one with the same code) and one `admin` user, verified and active |
+| Refuses | If **any** platform admin already exists — this is a first-run command, not an admin factory |
+| Refuses | A password under 12 characters, or a known/published one such as the seed password |
+| Refuses | An email address already in use |
+| Records | An audit row (`user.create`, `via: database.bootstrap`). The password is never logged, printed, or stored |
+| Is not | Reachable over HTTP. There is no endpoint, and a test asserts no route contains "bootstrap" |
+
+**Afterwards:**
+
+1. Sign in and change the password.
+2. Remove the `BOOTSTRAP_*` values from wherever you put them. They are needed
+   for one command, not for every boot — do not add them as service env vars.
+3. Create the school code your students will use at signup (`/admin/schools`),
+   if it differs from the bootstrap one.
+4. Register counselors at `/admin/counselors` **and assign each to their
+   school(s)**. An unassigned counselor receives no risk queue, no roster and
+   no crisis alerts — see §8.
+
+To add further admins later, use `/admin/users`; the bootstrap command will
+refuse from this point on.
+
+---
+
 ## 6. Backups
 
 Kio stores mental-health records for minors. Treat the database as the only
