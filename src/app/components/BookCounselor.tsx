@@ -330,11 +330,10 @@ export function BookCounselor() {
                   key={child.student_id}
                   type="button"
                   onClick={() => setChildId(child.student_id)}
-                  className={`px-4 py-2 rounded-lg border text-sm transition ${
-                    childId === child.student_id
-                      ? 'border-primary bg-primary/5 text-primary font-medium'
-                      : 'border-border hover:bg-muted'
-                  }`}
+                  className={`px-4 py-2 rounded-lg border text-sm transition ${childId === child.student_id
+                    ? 'border-primary bg-primary/5 text-primary font-medium'
+                    : 'border-border hover:bg-muted'
+                    }`}
                 >
                   {childName(child)}
                 </button>
@@ -365,11 +364,10 @@ export function BookCounselor() {
                   key={label + sublabel}
                   type="button"
                   onClick={() => chooseDay(date)}
-                  className={`px-4 py-2.5 rounded-lg border text-sm text-left transition ${
-                    active
-                      ? 'border-primary bg-primary/5 text-primary'
-                      : 'border-border hover:bg-muted'
-                  }`}
+                  className={`px-4 py-2.5 rounded-lg border text-sm text-left transition ${active
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border hover:bg-muted'
+                    }`}
                 >
                   <span className="block font-medium">{label}</span>
                   <span className="block text-xs text-muted-foreground">{sublabel}</span>
@@ -411,11 +409,10 @@ export function BookCounselor() {
                     label: window.label,
                   })
                 }
-                className={`px-4 py-2.5 rounded-lg border text-sm text-left transition ${
-                  timeChoice?.id === window.id
-                    ? 'border-primary bg-primary/5 text-primary'
-                    : 'border-border hover:bg-muted'
-                }`}
+                className={`px-4 py-2.5 rounded-lg border text-sm text-left transition ${timeChoice?.id === window.id
+                  ? 'border-primary bg-primary/5 text-primary'
+                  : 'border-border hover:bg-muted'
+                  }`}
               >
                 <span className="block font-medium">{window.label}</span>
                 <span className="block text-xs text-muted-foreground">{window.sublabel}</span>
@@ -569,11 +566,11 @@ function Header() {
       <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
         <KioLogo className="h-7" />
         <Link
-          to="/"
+          to="/student"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back
+          Back to home
         </Link>
       </div>
     </header>
