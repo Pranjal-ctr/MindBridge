@@ -2,7 +2,7 @@
 
 > **Last Updated:** September 16, 2026
 > **Status:** Production hardening complete -- student experience redesign, AI control layer, audit trail, availability engine, revocable sessions, observability, consent layer
-> **Tests:** 471 backend (`pytest tests/`) + 42 frontend (`npm test`)
+> **Tests:** 483 backend (`pytest tests/`) + 42 frontend (`npm test`)
 
 ---
 
@@ -209,7 +209,7 @@ npm run build
   runs on a timer, which no CSS variant could stop) and the keyframes in
   `globals.css` carry a media-query backstop.
 - No backend change, no migration, no new dependency. Typecheck clean;
-  42 frontend and 471 backend tests pass.
+  42 frontend and 483 backend tests pass.
 
 ### September 16, 2026 — AI control layer: providers, runtime switching, guardrails
 - **Extension, not a rewrite.** `AIProvider`, the factory, `AIRouter` and
@@ -825,7 +825,7 @@ npm run build
   retry/fallback, and cost guardrails — see `docs/ai-providers.md`
 
 **Numbers:** 32 frontend routes · 20 backend modules · 48 tables · 19 migrations ·
-471 backend tests · 42 frontend tests
+483 backend tests · 42 frontend tests
 
 **Known gaps** — see Next Steps below.
 

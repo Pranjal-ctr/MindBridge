@@ -20,6 +20,7 @@ otherwise be invisible until it was exploited.
 | `ENVIRONMENT=production` and `JWT_SECRET_KEY` is the dev default | The dev secret is in this repository. Anyone who has read it could mint a valid admin token. |
 | `CORS_ORIGINS` contains `*` | Kio sends credentials. Browsers reject wildcard-plus-credentials outright, so this only produces a confusing failure while advertising that any site may call the API. |
 | `ENVIRONMENT=production` and `CORS_ORIGINS` contains a loopback origin | A leftover `localhost` entry means the production config was never actually reviewed. |
+| `ENVIRONMENT=production` and `DB_ECHO=true` | SQLAlchemy echo logs every statement **and its bound parameters** — which in Kio are message text, counselor notes and crisis assessments. Enabling it would copy protected content into the host's log drain. |
 
 ---
 
@@ -67,8 +68,53 @@ and redeploy, not a restart.
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh sessions are revocable, so this is a ceiling, not the exposure. |
 | `AI_DAILY_MESSAGE_LIMIT` | `100` | Per student per day. Cost control. |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `20` / `10` | Must fit inside the database's own connection limit. |
-| `DB_ECHO` | `false` | **Never enable in production.** It logs every statement, including parameter values. |
+| `DB_ECHO` | `false` | Logs every statement **and its parameter values**. **Refused at startup in production** — see above. Remains available in development. |
 | `KIO_ALLOW_PRODUCTION_SEED` | *(unset)* | Only `i-understand` permits seeding a production environment. See below. |
+
+---
+
+## SQL statement logging (`DB_ECHO`)
+
+**`DB_ECHO=true` is refused at startup when `ENVIRONMENT=production`.**
+
+SQLAlchemy's echo mode logs every statement *and its bound parameters* at INFO.
+In most products that is a noisy convenience. In Kio the bound parameters of an
+ordinary `INSERT` are a student's message to Comrade, a counselor's session
+note, or a crisis assessment — so enabling echo in production would copy exactly
+the content this product exists to protect into the host's log drain, where it
+is retained on a schedule nobody chose for privacy reasons and readable by
+anyone with log access.
+
+The failure names the variable:
+
+```
+DB_ECHO must be false in production. SQLAlchemy echo logs SQL statement
+parameters, which for Kio include conversation and message content.
+Refusing to start.
+```
+
+**Refused, not silently forced to false.** This matches the other guards here.
+An operator who set the flag meant to see something; quietly ignoring it would
+leave them debugging why their change had no effect while believing it had
+taken, and would mean production behaved differently from the configuration on
+file. A startup failure is the faster route to the right outcome.
+
+**Unchanged in development and test**, where echo is a genuinely useful tool.
+Note that `is_production` is an exact match on `"production"`, so a `staging`
+environment is treated as non-production here exactly as it is by every other
+guard — set `ENVIRONMENT=production` on any deployment holding real student data.
+
+### `echo` is the only route to statement logging
+
+Raising the application's log level does **not** produce it. SQLAlchemy pins its
+own `sqlalchemy` logger to `WARNING` when imported (`sqlalchemy/log.py`), so it
+does not inherit the root logger's level — `DEBUG=true` or a verbose `LOG_LEVEL`
+alone cannot emit statements or parameters. `database/session.py` sets no other
+logging option (no `echo_pool`, no explicit `sqlalchemy.engine` level).
+
+`backend/tests/test_config_db_echo.py` asserts all of this against SQLAlchemy
+itself, so a dependency upgrade or a change to `main.py`'s logging setup that
+opened a second route would fail the suite rather than ship.
 
 ---
 
@@ -165,8 +211,6 @@ points that matter for a deployment:
 > implemented and none should be added until a period is agreed — see
 > [Retention](audit-logging.md#retention). This sits alongside the other open
 > DPDP questions recorded in `app/consent/policy.py`.
-
----
 
 ---
 

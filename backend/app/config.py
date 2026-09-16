@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Database
     # -------------------------------------------------------------------
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/mindbridge"
+    #: SQLAlchemy echo. Logs every statement AND its bound parameters --
+    #: which here are message text. Refused outright in production; see
+    #: _forbid_sql_echo_in_production below.
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
@@ -278,6 +281,39 @@ class Settings(BaseSettings):
             raise ValueError(
                 "JWT_SECRET_KEY must be set to a strong secret in production. "
                 "Refusing to start with the development default."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _forbid_sql_echo_in_production(self) -> "Settings":
+        """
+        DB_ECHO=true logs SQL *parameters*, which in Kio are message text.
+
+        SQLAlchemy's echo mode emits every statement and its bound parameters
+        at INFO. In most products that is a noisy convenience; here the bound
+        parameters of an ordinary INSERT are a student's message to Comrade, a
+        counselor's session note, or a crisis assessment -- so switching it on
+        in production would copy the protected content into the host's log
+        drain, where it is retained on a schedule nobody chose for privacy
+        reasons and readable by anyone with log access.
+
+        Refused rather than silently forced to false, matching the other
+        guards here: an operator who set it meant to see something, and
+        quietly ignoring the setting would leave them debugging why their
+        change had no effect while believing it had taken. A startup failure
+        naming the variable is the faster path to the right outcome.
+
+        `echo` is the only way this can happen. SQLAlchemy pins its own
+        `sqlalchemy` logger to WARNING when it is imported (sqlalchemy/log.py),
+        so it does not inherit the root level -- LOG_LEVEL or DEBUG=true alone
+        cannot produce statement logging. test_config_db_echo.py asserts that,
+        so a future logging change cannot open the second route unnoticed.
+        """
+        if self.is_production and self.DB_ECHO:
+            raise ValueError(
+                "DB_ECHO must be false in production. SQLAlchemy echo logs SQL "
+                "statement parameters, which for Kio include conversation and "
+                "message content. Refusing to start."
             )
         return self
 
