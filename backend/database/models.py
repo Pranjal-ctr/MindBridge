@@ -1551,7 +1551,58 @@ class AIUsageLog(Base):
     output_tokens: Mapped[Optional[int]] = mapped_column(Integer)
     estimated_cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
     success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    #: Provider-neutral, low-cardinality failure label from app/ai/errors.py
+    #: ("timeout", "rate_limit", "configuration", ...). Added by migration 019
+    #: so failures can be grouped without parsing error_message.
+    failure_category: Mapped[Optional[str]] = mapped_column(String(40))
+    #: Whether this attempt was the fallback provider rather than the primary.
+    fallback_used: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: Correlation id from app/observability.py -- joins this row to the
+    #: structured logs, the audit trail, and the Sentry event for the request.
+    request_id: Mapped[Optional[str]] = mapped_column(String(64))
+    #: A provider-neutral, redacted failure description. NEVER the raw provider
+    #: exception: those can quote the request, and the request carries the
+    #: prompt. See app/ai/usage.py.
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AIRuntimeConfig(Base, FullTimestampMixin):
+    """The single active platform AI configuration (provider + model).
+
+    One row, pinned to config_id=1 by a CHECK constraint: "which configuration
+    is active" is then a property of the schema rather than a convention that
+    application code has to keep remembering.
+
+    Deliberately holds NO credentials. API keys are server-side environment
+    secrets; storing one here would put it in every database backup, in the
+    audit trail's reach, and one serialisation bug away from the admin API.
+    The registry checks key *presence* from the environment instead.
+
+    This table is also deliberately unrelated to any authentication table.
+    Changing the active model must not be able to touch a session, and the
+    cleanest guarantee of that is that there is no path from here to one.
+    """
+
+    __tablename__ = "ai_runtime_config"
+    __table_args__ = (
+        CheckConstraint("config_id = 1", name="ck_ai_runtime_config_singleton"),
+    )
+
+    config_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    primary_provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    primary_model: Mapped[str] = mapped_column(String(100), nullable=False)
+    fallback_provider: Mapped[Optional[str]] = mapped_column(String(50))
+    fallback_model: Mapped[Optional[str]] = mapped_column(String(100))
+    fallback_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: Who last changed it. SET NULL rather than CASCADE: the configuration
+    #: must outlive the admin who set it.
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="SET NULL")
     )

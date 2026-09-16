@@ -297,6 +297,84 @@ class AIRouteListResponse(BaseModel):
 
 
 # -------------------------------------------------------------------
+# Platform AI configuration (provider/model registry + runtime config)
+# -------------------------------------------------------------------
+
+class AIModelOption(BaseModel):
+    """One selectable model, from the backend registry."""
+    model_id: str
+    display_name: str
+    supports_structured_output: bool
+
+
+class AIProviderOption(BaseModel):
+    """One selectable provider and its models.
+
+    `credential_configured` is a boolean, deliberately. The admin page needs to
+    know whether OpenAI can be selected; it must never learn anything about the
+    key itself, so no prefix, length, or masked form is returned.
+    """
+    provider_id: str
+    display_name: str
+    credential_configured: bool
+    #: Which env var supplies this provider's key, so the error message can
+    #: name it. The variable NAME, never its value.
+    credential_setting: str
+    models: list[AIModelOption]
+
+
+class AIProviderHealth(BaseModel):
+    """Recent operational state for one provider.
+
+    Derived from telemetry Kio already records (ai_usage_logs) and from the
+    in-process breaker -- never by calling the provider. Polling a paid API on
+    a schedule to colour a badge would cost money to answer a question the
+    real traffic already answers.
+    """
+    provider_id: str
+    credential_configured: bool
+    #: "configured" | "credentials_missing" | "recently_successful"
+    #: | "recently_failing" | "cooling_down" | "unused"
+    status: str
+    recent_success_count: int = 0
+    recent_failure_count: int = 0
+    last_failure_category: str | None = None
+    circuit_open: bool = False
+    cooldown_remaining_seconds: int = 0
+
+
+class AIConfigResponse(BaseModel):
+    """The active platform AI configuration, plus what may be selected."""
+    primary_provider: str
+    primary_model: str
+    fallback_provider: str | None = None
+    fallback_model: str | None = None
+    fallback_enabled: bool
+    #: "environment" (no saved override) or "database" (admin has saved one).
+    source: str
+    updated_at: datetime | None = None
+    updated_by_name: str | None = None
+    providers: list[AIProviderOption]
+    health: list[AIProviderHealth]
+
+
+class AIConfigUpdate(BaseModel):
+    """A platform admin's requested AI configuration.
+
+    Only the shape is validated here. Whether the provider/model pair is
+    supported and whether its credential exists is decided server-side by
+    app/ai/runtime_config.validate_config() -- a Pydantic Literal would have to
+    be kept in sync with the registry by hand, and the registry is the one
+    authority.
+    """
+    primary_provider: str = Field(..., max_length=50)
+    primary_model: str = Field(..., max_length=100)
+    fallback_provider: str | None = Field(None, max_length=50)
+    fallback_model: str | None = Field(None, max_length=100)
+    fallback_enabled: bool = False
+
+
+# -------------------------------------------------------------------
 # Platform Analytics
 # -------------------------------------------------------------------
 

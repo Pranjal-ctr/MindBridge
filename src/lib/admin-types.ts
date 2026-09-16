@@ -354,6 +354,70 @@ export interface AIProviderListResponse {
   providers: AIProviderConfig[];
 }
 
+// ── Platform AI configuration (registry-driven) ───────────────────────
+
+export interface AIModelOption {
+  model_id: string;
+  display_name: string;
+  supports_structured_output: boolean;
+}
+
+/**
+ * One selectable provider, from the backend registry.
+ *
+ * `credential_configured` is a boolean and nothing more — the page needs to
+ * know whether OpenAI can be selected, never anything about the key itself.
+ */
+export interface AIProviderOption {
+  provider_id: string;
+  display_name: string;
+  credential_configured: boolean;
+  /** The env var NAME that supplies the key, so errors can name it. */
+  credential_setting: string;
+  models: AIModelOption[];
+}
+
+export type AIProviderStatus =
+  | 'configured'
+  | 'credentials_missing'
+  | 'recently_successful'
+  | 'recently_failing'
+  | 'cooling_down'
+  | 'unused';
+
+export interface AIProviderHealth {
+  provider_id: string;
+  credential_configured: boolean;
+  status: AIProviderStatus;
+  recent_success_count: number;
+  recent_failure_count: number;
+  last_failure_category: string | null;
+  circuit_open: boolean;
+  cooldown_remaining_seconds: number;
+}
+
+export interface AIConfig {
+  primary_provider: string;
+  primary_model: string;
+  fallback_provider: string | null;
+  fallback_model: string | null;
+  fallback_enabled: boolean;
+  /** 'environment' = no saved override yet; 'database' = an admin saved one. */
+  source: 'environment' | 'database';
+  updated_at: string | null;
+  updated_by_name: string | null;
+  providers: AIProviderOption[];
+  health: AIProviderHealth[];
+}
+
+export interface AIConfigUpdatePayload {
+  primary_provider: string;
+  primary_model: string;
+  fallback_provider: string | null;
+  fallback_model: string | null;
+  fallback_enabled: boolean;
+}
+
 export interface PromptVersion {
   prompt_id: string;
   prompt_name: string;

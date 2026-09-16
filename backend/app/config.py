@@ -81,11 +81,56 @@ class Settings(BaseSettings):
     # AI / Gemini
     # -------------------------------------------------------------------
     GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+
+    # Startup defaults for the platform AI configuration. These seed the
+    # runtime config; once a platform admin saves a configuration, the DB row
+    # is authoritative and these are only the fallback if it is removed.
+    # See app/ai/runtime_config.py for the full precedence chain.
+    AI_PRIMARY_PROVIDER: str = "gemini"
+    AI_PRIMARY_MODEL: str = "gemini-2.5-flash"
+    AI_FALLBACK_PROVIDER: str = "openai"
+    AI_FALLBACK_MODEL: str = "gpt-5-mini"
+    #: Off by default. OpenAI is implemented and supported, but this deployment
+    #: has no OPENAI_API_KEY, and an enabled fallback with no credential is a
+    #: configuration that only fails at the worst moment.
+    AI_FALLBACK_ENABLED: bool = False
+
+    #: Deprecated alias for AI_PRIMARY_MODEL, kept so existing .env files and
+    #: the pre-existing default route keep working. Read nowhere on the request
+    #: path any more.
     GEMINI_MODEL: str = "gemini-2.5-flash"
+
     AI_MAX_CONTEXT_MESSAGES: int = 20
     AI_SUMMARY_THRESHOLD: int = 20  # Hook trigger threshold
     AI_DEFAULT_MAX_RETRIES: int = 2  # Used when a feature has no DB route configured yet
     AI_DAILY_MESSAGE_LIMIT: int = 100  # Max chat AI calls per student per day (spend cap)
+
+    # --- Guardrails (see app/ai/guardrails.py) --------------------------
+    #: Hard ceiling on a single provider call. Before this existed a hung
+    #: provider hung the student's chat request with it, indefinitely.
+    AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+    #: Ceiling on max_output_tokens any caller may request. Callers pass their
+    #: own smaller values; this stops an unbounded response.
+    AI_MAX_OUTPUT_TOKENS_CEILING: int = 4096
+    #: Ceiling on the characters sent to a provider in one call. Comfortably
+    #: above a full 20-message context window plus system prompt.
+    AI_MAX_INPUT_CHARS: int = 60_000
+    #: Per-user and per-feature request ceilings, per rolling minute.
+    AI_USER_REQUESTS_PER_MINUTE: int = 20
+    AI_FEATURE_REQUESTS_PER_MINUTE: int = 120
+    #: Whole-process ceiling, per rolling minute. The last line of defence
+    #: against a runaway loop billing the platform.
+    AI_GLOBAL_REQUESTS_PER_MINUTE: int = 300
+    #: Concurrent in-flight provider calls per user, process-wide.
+    AI_MAX_CONCURRENT_PER_USER: int = 3
+    #: Optional token ceilings. 0 disables the check -- tokens are only counted
+    #: when a provider actually reports them, never estimated.
+    AI_DAILY_TOKEN_CEILING: int = 0
+    AI_MONTHLY_TOKEN_CEILING: int = 0
+    #: Consecutive transient failures before a provider is put in cooldown.
+    AI_CIRCUIT_FAILURE_THRESHOLD: int = 5
+    AI_CIRCUIT_COOLDOWN_SECONDS: float = 60.0
 
     # -------------------------------------------------------------------
     # Google OAuth (Sign in with Google) -- ID-token flow
@@ -172,6 +217,60 @@ class Settings(BaseSettings):
     @property
     def sentry_enabled(self) -> bool:
         return bool(self.SENTRY_DSN.strip())
+
+    @model_validator(mode="after")
+    def _validate_ai_credentials(self) -> "Settings":
+        """
+        Require a credential only for providers this deployment actually uses.
+
+        The rule is deliberately narrow. OpenAI is a supported provider in the
+        code whether or not this server has a key for it, and requiring
+        OPENAI_API_KEY merely because the adapter exists would make an
+        unused capability into a startup failure. So:
+
+          - the active primary provider must have its key
+          - the fallback provider must have its key *only if* fallback is on
+
+        Outside production this warns rather than raises: the test suite and a
+        fresh checkout both run with no AI credentials at all, and a hard
+        failure there would make the whole app un-runnable to work on any
+        unrelated feature.
+
+        Provider/model *support* is not validated here -- app/ai/registry.py
+        owns that, and importing it at settings-construction time would be a
+        circular import. An unsupported pair is caught at the point of use and
+        at the admin save path, both of which fail loudly.
+        """
+        import logging
+
+        problems: list[str] = []
+        if self.AI_PRIMARY_PROVIDER == "gemini" and not self.GEMINI_API_KEY.strip():
+            problems.append("AI_PRIMARY_PROVIDER=gemini requires GEMINI_API_KEY")
+        if self.AI_PRIMARY_PROVIDER == "openai" and not self.OPENAI_API_KEY.strip():
+            problems.append("AI_PRIMARY_PROVIDER=openai requires OPENAI_API_KEY")
+
+        if self.AI_FALLBACK_ENABLED:
+            if self.AI_FALLBACK_PROVIDER == "openai" and not self.OPENAI_API_KEY.strip():
+                problems.append("AI_FALLBACK_ENABLED=true with openai requires OPENAI_API_KEY")
+            if self.AI_FALLBACK_PROVIDER == "gemini" and not self.GEMINI_API_KEY.strip():
+                problems.append("AI_FALLBACK_ENABLED=true with gemini requires GEMINI_API_KEY")
+            if (
+                self.AI_FALLBACK_PROVIDER == self.AI_PRIMARY_PROVIDER
+                and self.AI_FALLBACK_MODEL == self.AI_PRIMARY_MODEL
+            ):
+                problems.append(
+                    "AI fallback must differ from the primary provider/model; "
+                    "retrying the same model is what max_retries is for"
+                )
+
+        if problems:
+            joined = "; ".join(problems)
+            if self.is_production:
+                raise ValueError(f"Invalid AI configuration: {joined}")
+            logging.getLogger(__name__).warning(
+                "AI configuration incomplete (non-production, continuing): %s", joined
+            )
+        return self
 
     @model_validator(mode="after")
     def _forbid_dev_secret_in_production(self) -> "Settings":

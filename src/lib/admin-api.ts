@@ -22,6 +22,8 @@ import type {
   AdminRiskFilters,
   AdminRiskListResponse,
   AIProviderListResponse,
+  AIConfig,
+  AIConfigUpdatePayload,
   AIRoute,
   AIRouteListResponse,
   AIRouteUpdatePayload,
@@ -210,6 +212,24 @@ export async function getAdminRiskDetail(riskId: string): Promise<AdminRiskDetai
 }
 
 // ── AI control ────────────────────────────────────────────────────────
+
+/** The active platform AI configuration, the selectable registry, and health. */
+export async function getAIConfig(): Promise<AIConfig> {
+  const { data } = await api.get<AIConfig>('/admin/ai/config');
+  return data;
+}
+
+/**
+ * Change which supported provider/model serves every AI feature.
+ *
+ * Rejected with 422 (and nothing saved) unless the pair is in the backend
+ * registry and its API key is present on the server, so a working
+ * configuration can never be replaced by an unusable one.
+ */
+export async function updateAIConfig(payload: AIConfigUpdatePayload): Promise<AIConfig> {
+  const { data } = await api.put<AIConfig>('/admin/ai/config', payload);
+  return data;
+}
 
 export async function listAIRoutes(): Promise<AIRouteListResponse> {
   const { data } = await api.get<AIRouteListResponse>('/admin/ai/routes');

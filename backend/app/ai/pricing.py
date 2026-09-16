@@ -3,6 +3,10 @@ Static $/token pricing table used to estimate cost per AI call.
 
 Approximate public list prices; unknown (provider, model) pairs default to 0.0
 rather than raising, so usage logging never breaks on a new/unlisted model.
+
+These are estimates for internal cost reporting, not billing. A zero here means
+"not priced", which is why token counts are stored separately and are never
+fabricated -- reconciliation is done against the provider's own invoice.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ _PRICING: dict[tuple[str, str], tuple[Decimal, Decimal]] = {
     ("gemini", "gemini-2.5-flash"): (Decimal("0.0003"), Decimal("0.0025")),
     ("gemini", "gemini-2.5-flash-lite"): (Decimal("0.0001"), Decimal("0.0004")),
     ("gemini", "gemini-2.5-pro"): (Decimal("0.00125"), Decimal("0.01")),
+    ("openai", "gpt-5-mini"): (Decimal("0.00025"), Decimal("0.002")),
 }
 
 

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,8 @@ from app.admin.schemas import (
     AdminRiskDetail,
     AdminRiskListResponse,
     AdminUserListResponse,
+    AIConfigResponse,
+    AIConfigUpdate,
     AIRouteListResponse,
     AIRouteResponse,
     AIRouteUpdate,
@@ -51,6 +53,8 @@ from app.admin.schemas import (
 from app.audit import log_audit
 from app.audit_actions import AuditAction, AuditEntity, AuditSeverity
 from app.admin.service import (
+    get_ai_config,
+    update_ai_config,
     activate_prompt,
     get_admin_risk_detail,
     list_admin_risk,
@@ -403,10 +407,57 @@ async def patch_ai_route(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Change the model routing for an AI feature (primary/fallback provider + model)."""
+    """Change the model routing for one AI feature (a deliberate override).
+
+    This endpoint predates the platform configuration and is kept: running risk
+    detection on a different model than chat is a real need. It now validates
+    against the same registry, because it previously accepted arbitrary
+    provider and model strings -- which meant a typo here could point a
+    safety-critical feature at a model that does not exist, and the failure
+    would only appear the next time a student said something concerning.
+    """
     return await update_ai_route(
         db, feature_name, payload, actor_id=admin.user_id, request=request
     )
+
+
+@router.get(
+    "/ai/config",
+    response_model=AIConfigResponse,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def read_ai_config(db: Annotated[AsyncSession, Depends(get_db)]):
+    """The active platform AI configuration, the selectable registry, and health.
+
+    Platform admin only. Returns credential *availability* as a boolean per
+    provider and never any part of a key.
+    """
+    return await get_ai_config(db)
+
+
+@router.put(
+    "/ai/config",
+    response_model=AIConfigResponse,
+)
+async def write_ai_config(
+    payload: AIConfigUpdate,
+    admin: AdminUser,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Change which supported provider/model serves every AI feature.
+
+    Platform admin only. Rejected with 422 (and nothing written) unless the
+    provider and model are both in the backend registry and the provider's API
+    key is present on this server, so a valid configuration can never be
+    replaced by an unusable one.
+
+    Takes effect for new AI requests immediately -- no restart, no deploy. It
+    is not an authentication change: no session, token, or user record is read
+    or written on this path, and requests already in flight keep the provider
+    they started with.
+    """
+    return await update_ai_config(db, payload, admin.user_id, request=request)
 
 
 # -------------------------------------------------------------------

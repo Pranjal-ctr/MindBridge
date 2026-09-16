@@ -77,10 +77,14 @@ async def _create_database_and_schema() -> None:
             ("risk_detection", "gemini-2.5-flash"),
             ("parent_insight", "gemini-2.5-flash"),
         ]:
+            # is_active=false mirrors what migration 019 leaves in a real
+            # database: these rows are seeded *defaults*, and the platform
+            # runtime configuration is what actually routes them. A test DB
+            # with them active would exercise a layer production does not use.
             await conn.execute(text(
                 "INSERT INTO ai_feature_routes "
                 "(feature_name, primary_provider, primary_model, max_retries, is_active) "
-                "VALUES (:f, 'gemini', :m, 2, true) ON CONFLICT (feature_name) DO NOTHING"
+                "VALUES (:f, 'gemini', :m, 2, false) ON CONFLICT (feature_name) DO NOTHING"
             ), {"f": feature, "m": model})
     await test_engine.dispose()
 

@@ -5,17 +5,23 @@ Kio Admin Service
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.errors import AIError
+from app.config import settings
 from app.audit import log_audit, log_audit_detached
 from app.audit_actions import AuditAction, AuditEntity, AuditResult, AuditSeverity
 from app.admin.schemas import (
     AdminRiskDetail,
+    AIConfigResponse,
+    AIConfigUpdate,
+    AIProviderHealth,
+    AIProviderOption,
     AdminRiskRow,
     AdminUserListResponse,
     AdminUserRow,
@@ -53,6 +59,7 @@ from app.admin.schemas import (
 )
 from database.models import (
     AIFeatureRoute,
+    AIRuntimeConfig,
     AIPromptVersion,
     AIProviderConfig,
     AIUsageLog,
@@ -858,6 +865,29 @@ async def list_ai_routes(db: AsyncSession) -> AIRouteListResponse:
     return AIRouteListResponse(routes=[AIRouteResponse.model_validate(r) for r in routes])
 
 
+def _assert_registry_pair(
+    provider: str | None, model: str | None, label: str
+) -> None:
+    """422 unless a provider/model pair is registry-supported and credentialed.
+
+    Refuses a half-specified pair, which would otherwise leave a route holding
+    a provider from one request and a model from another.
+    """
+    from app.ai import registry
+
+    if provider is None or model is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Both {label} provider and {label} model must be set together.",
+        )
+    try:
+        registry.assert_usable(provider, model)
+    except AIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
+
+
 async def update_ai_route(
     db: AsyncSession,
     feature_name: str,
@@ -875,6 +905,22 @@ async def update_ai_route(
 
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(route, field, value)
+
+    # Validate the EFFECTIVE pair, after merging the patch onto the stored row.
+    # A PATCH is partial -- "just change the model" is the common case -- so the
+    # provider and model can only be checked together once both are known.
+    #
+    # This endpoint previously accepted any string, which meant a typo could
+    # point a safety-critical feature at a model that does not exist, and the
+    # failure would surface only the next time a student said something
+    # concerning. Only checked while the override is active: an inactive row is
+    # not routed to, and refusing to edit a parked one would be needless.
+    if route.is_active:
+        _assert_registry_pair(route.primary_provider, route.primary_model, "primary")
+        if route.fallback_provider or route.fallback_model:
+            _assert_registry_pair(
+                route.fallback_provider, route.fallback_model, "fallback"
+            )
 
     await db.flush()
     await db.refresh(route)
@@ -1035,6 +1081,15 @@ async def run_playground(db: AsyncSession, payload: PlaygroundRequest) -> list[P
     async def run_variant(variant, system_prompt):
         start = time.monotonic()
         try:
+            # The playground calls a provider directly (it deliberately
+            # bypasses feature routing -- comparing models is the point), so it
+            # must do its own registry check. Without one this endpoint was a
+            # way to send an arbitrary admin-supplied model string to a
+            # provider API.
+            from app.ai import registry
+
+            registry.assert_usable(variant.provider, variant.model)
+
             provider = factory.get_provider(variant.provider)
             response = await provider.generate(
                 model=variant.model,
@@ -1042,10 +1097,17 @@ async def run_playground(db: AsyncSession, payload: PlaygroundRequest) -> list[P
                 contents=contents,
                 temperature=variant.temperature,
                 max_output_tokens=1024,
+                timeout_seconds=settings.AI_REQUEST_TIMEOUT_SECONDS,
             )
             return response, int((time.monotonic() - start) * 1000), None
-        except Exception as e:
+        except AIError as e:
+            # Kio's own error taxonomy: safe to show an admin, names no
+            # credential and quotes no prompt.
             return None, int((time.monotonic() - start) * 1000), str(e)
+        except Exception as e:  # noqa: BLE001
+            # Unmapped -- type only. The text is unreviewed and this string is
+            # returned to the browser.
+            return None, int((time.monotonic() - start) * 1000), f"unexpected {type(e).__name__}"
 
     outcomes = await asyncio.gather(*(
         run_variant(v, sp) for v, (sp, _) in zip(payload.variants, resolved)
@@ -1421,6 +1483,199 @@ async def update_platform_config(
         description=row.description,
         source="database",
     )
+
+
+# -------------------------------------------------------------------
+# Platform AI configuration
+# -------------------------------------------------------------------
+
+#: Window used to describe "recent" provider health on the admin page.
+_AI_HEALTH_WINDOW = timedelta(hours=24)
+
+
+async def _provider_health(db: AsyncSession) -> list[AIProviderHealth]:
+    """Recent per-provider health, from telemetry Kio already collects.
+
+    Deliberately does not call any provider. A synthetic health check would
+    cost money on every page load to answer a question that real traffic
+    already answers, and would report "healthy" for a provider that is failing
+    on the only prompts that matter.
+    """
+    from app.ai import guardrails, registry
+
+    since = datetime.now(timezone.utc) - _AI_HEALTH_WINDOW
+    rows = (await db.execute(
+        select(
+            AIUsageLog.provider,
+            AIUsageLog.success,
+            func.count().label("n"),
+            func.max(AIUsageLog.failure_category).label("last_category"),
+        )
+        .where(AIUsageLog.created_at >= since)
+        .group_by(AIUsageLog.provider, AIUsageLog.success)
+    )).all()
+
+    tallies: dict[str, dict] = {}
+    for provider, success, count, last_category in rows:
+        entry = tallies.setdefault(
+            provider, {"success": 0, "failure": 0, "last_category": None}
+        )
+        if success:
+            entry["success"] += count
+        else:
+            entry["failure"] += count
+            entry["last_category"] = last_category
+
+    breakers = guardrails.breaker_snapshot()
+
+    health: list[AIProviderHealth] = []
+    for spec in registry.SUPPORTED_PROVIDERS:
+        configured = registry.credential_configured(spec.provider_id)
+        tally = tallies.get(spec.provider_id, {})
+        successes = tally.get("success", 0)
+        failures = tally.get("failure", 0)
+        breaker = breakers.get(spec.provider_id, {})
+
+        if breaker.get("open"):
+            status_label = "cooling_down"
+        elif not configured:
+            # Not an error. OpenAI having no key on this server is the
+            # expected state, not a fault -- Kio is not unhealthy because an
+            # optional provider is unconfigured.
+            status_label = "credentials_missing"
+        elif failures and failures >= successes:
+            status_label = "recently_failing"
+        elif successes:
+            status_label = "recently_successful"
+        else:
+            status_label = "configured"
+
+        health.append(AIProviderHealth(
+            provider_id=spec.provider_id,
+            credential_configured=configured,
+            status=status_label,
+            recent_success_count=successes,
+            recent_failure_count=failures,
+            last_failure_category=tally.get("last_category"),
+            circuit_open=bool(breaker.get("open")),
+            cooldown_remaining_seconds=int(breaker.get("cooldown_remaining_seconds", 0)),
+        ))
+    return health
+
+
+async def get_ai_config(db: AsyncSession) -> AIConfigResponse:
+    """The active platform AI configuration plus the selectable registry."""
+    from app.ai import registry
+    from app.ai.runtime_config import SINGLETON_ID, get_active_config
+
+    config = await get_active_config(db)
+
+    updated_at = None
+    updated_by_name = None
+    row = (await db.execute(
+        select(AIRuntimeConfig, User)
+        .outerjoin(User, AIRuntimeConfig.updated_by == User.user_id)
+        .where(AIRuntimeConfig.config_id == SINGLETON_ID)
+    )).one_or_none()
+    if row is not None:
+        stored, actor = row
+        updated_at = stored.updated_at
+        if actor is not None:
+            updated_by_name = f"{actor.first_name} {actor.last_name}".strip()
+
+    return AIConfigResponse(
+        primary_provider=config.primary_provider,
+        primary_model=config.primary_model,
+        fallback_provider=config.fallback_provider,
+        fallback_model=config.fallback_model,
+        fallback_enabled=config.fallback_enabled,
+        source=config.source,
+        updated_at=updated_at,
+        updated_by_name=updated_by_name,
+        providers=[AIProviderOption(**p) for p in registry.describe_registry()],
+        health=await _provider_health(db),
+    )
+
+
+async def update_ai_config(
+    db: AsyncSession,
+    payload: AIConfigUpdate,
+    actor_id: uuid.UUID,
+    request: Request | None = None,
+) -> AIConfigResponse:
+    """Validate and persist a new platform AI configuration.
+
+    Fail-safe by construction: validation runs before any write, so a rejected
+    configuration leaves the stored row, the in-process cache, and the provider
+    currently serving traffic all untouched. There is no partial save -- it is
+    a single row inside the caller's transaction.
+
+    Touches nothing related to authentication. No session, token, or user row
+    is read or written here, which is why changing the model cannot log anyone
+    out; app/ai/runtime_config.py imports nothing from app.auth at all.
+    """
+    from app.ai.errors import AIConfigurationError
+    from app.ai.runtime_config import save_config
+
+    try:
+        previous, current = await save_config(
+            db,
+            primary_provider=payload.primary_provider,
+            primary_model=payload.primary_model,
+            fallback_provider=payload.fallback_provider,
+            fallback_model=payload.fallback_model,
+            fallback_enabled=payload.fallback_enabled,
+            actor_user_id=actor_id,
+        )
+    except AIConfigurationError as exc:
+        # Audited as a failure before raising: a refused attempt to point the
+        # platform at a different model is exactly the kind of administrative
+        # action worth being able to find later. Written on a detached session
+        # because this request is about to roll back.
+        await log_audit_detached(
+            user_id=actor_id,
+            action=AuditAction.AI_CONFIGURATION_CHANGED,
+            entity_type=AuditEntity.AI_CONFIG,
+            details={
+                "requested_provider": payload.primary_provider,
+                "requested_model": payload.primary_model,
+                "rejection_reason": str(exc),
+            },
+            request=request,
+            actor_role="admin",
+            result=AuditResult.FAILURE,
+            severity=AuditSeverity.WARNING,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
+
+    # Identifiers only -- provider and model names are safe to record, and no
+    # credential, prompt, or response is involved in this event at all.
+    await log_audit(
+        db,
+        user_id=actor_id,
+        action=AuditAction.AI_CONFIGURATION_CHANGED,
+        entity_type=AuditEntity.AI_CONFIG,
+        details={
+            "previous_provider": previous.primary_provider,
+            "previous_model": previous.primary_model,
+            "new_provider": current.primary_provider,
+            "new_model": current.primary_model,
+            "previous_fallback_provider": previous.fallback_provider,
+            "previous_fallback_model": previous.fallback_model,
+            "new_fallback_provider": current.fallback_provider,
+            "new_fallback_model": current.fallback_model,
+            "fallback_enabled": current.fallback_enabled,
+            "previous_source": previous.source,
+        },
+        request=request,
+        actor_role="admin",
+        # This decides which model talks to every student on the platform.
+        severity=AuditSeverity.CRITICAL,
+    )
+
+    return await get_ai_config(db)
 
 
 # -------------------------------------------------------------------

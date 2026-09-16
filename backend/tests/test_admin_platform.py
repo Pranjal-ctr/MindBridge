@@ -29,10 +29,30 @@ async def test_ai_routes_list_and_update(client: AsyncClient, admin_auth_headers
     features = {r["feature_name"] for r in listing.json()["routes"]}
     assert {"comrade_chat", "memory_extraction", "title_generation"}.issubset(features)
 
+    # A supported model is accepted. (The route stays inactive here, so this
+    # only edits the parked override -- activating one is tested below.)
     upd = await client.patch("/admin/ai/routes/comrade_chat",
-                             json={"primary_model": "gemini-2.5-pro"}, headers=admin_auth_headers)
+                             json={"primary_model": "gemini-2.5-flash"},
+                             headers=admin_auth_headers)
     assert upd.status_code == 200
-    assert upd.json()["primary_model"] == "gemini-2.5-pro"
+    assert upd.json()["primary_model"] == "gemini-2.5-flash"
+
+
+@pytest.mark.asyncio
+async def test_ai_route_rejects_unsupported_model(client: AsyncClient, admin_auth_headers):
+    """An active override may only name a model this build actually supports.
+
+    This endpoint used to accept any string. A typo could point a
+    safety-critical feature at a model that does not exist, and the failure
+    would surface only the next time a student said something concerning.
+    """
+    upd = await client.patch(
+        "/admin/ai/routes/risk_detection",
+        json={"primary_model": "gemini-2.5-pro", "is_active": True},
+        headers=admin_auth_headers,
+    )
+    assert upd.status_code == 422
+    assert "not supported" in upd.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -76,8 +96,15 @@ async def test_ai_route_change_reflected_by_config_loader(client: AsyncClient, a
     """Updating a route should change what the AI config loader resolves."""
     from app.ai.config_loader import load_feature_route
 
-    await client.patch("/admin/ai/routes/title_generation",
-                       json={"primary_model": "gemini-2.5-flash"}, headers=admin_auth_headers)
+    # is_active is what makes a row a deliberate override rather than a parked
+    # default -- the loader only honours active ones.
+    resp = await client.patch(
+        "/admin/ai/routes/title_generation",
+        json={"primary_model": "gemini-2.5-flash", "is_active": True},
+        headers=admin_auth_headers,
+    )
+    assert resp.status_code == 200
 
     route = await load_feature_route(db_session, "title_generation")
     assert route.primary_model == "gemini-2.5-flash"
+    assert route.source == "feature_override"

@@ -1,8 +1,8 @@
 # Kio SaaS App — Project Context
 
 > **Last Updated:** September 11, 2026
-> **Status:** Production hardening complete -- audit trail, availability engine, revocable sessions, observability, consent layer
-> **Tests:** 370 backend (`pytest tests/`) + 42 frontend (`npm test`)
+> **Status:** Production hardening complete -- AI control layer, audit trail, availability engine, revocable sessions, observability, consent layer
+> **Tests:** 471 backend (`pytest tests/`) + 42 frontend (`npm test`)
 
 ---
 
@@ -166,6 +166,80 @@ npm run build
 ---
 
 ## 📝 Change Log
+
+### September 16, 2026 — AI control layer: providers, runtime switching, guardrails
+- **Extension, not a rewrite.** `AIProvider`, the factory, `AIRouter` and
+  `ai_feature_routes` already existed and still do; `ai_router.run()` is still
+  the single entry point every feature calls. What was added around them is the
+  ability to *choose* a provider safely and the ability to *survive* one.
+- **A controlled registry** (`app/ai/registry.py`) is now the authority on what
+  is supported: Gemini `gemini-2.5-flash`, OpenAI `gpt-5-mini`. The admin route
+  endpoint and the playground both previously accepted **arbitrary provider and
+  model strings** -- a typo could point `risk_detection` at a model that does
+  not exist, and the failure would surface only the next time a student said
+  something concerning. All three write paths now validate against the registry,
+  and the admin UI's free-text model box is gone.
+- **`OpenAIProvider`** over the existing `httpx` (no new dependency, no second
+  async HTTP stack, and no SDK bringing retry behaviour that would overlap with
+  AIRouter's). It absorbs the provider's quirks -- gpt-5 rejects a non-default
+  `temperature` and wants `max_completion_tokens` -- so nothing upstream knows.
+  **Not required to run:** a missing `OPENAI_API_KEY` does not affect startup or
+  Gemini, and no OpenAI call is made anywhere until an operator adds the secret.
+- **A provider-neutral error taxonomy** (`app/ai/errors.py`) replaced
+  `is_retryable()` string-matching on `"429"`. Retry and fallback are now decided
+  by error *class*, carrying two separate flags -- so a provider rewording a
+  message cannot silently change failover. Two classifications are deliberate:
+  a **429 retries but never falls over** (redirecting throttled traffic at a
+  second paid provider turns a throttle into a bill), and a **malformed response
+  never falls over** ("ask a different model and take that instead" is exactly
+  the pattern that would make a provider swap a way around validation).
+- **Runtime switching** (migration 019, `ai_runtime_config`). A platform admin
+  changes provider/model at `/admin/ai` with no deploy, no restart, and nobody
+  signed out. Precedence is explicit: **active per-feature override → platform
+  config → environment**. Validation runs before any write, so a rejected
+  configuration leaves the stored row, the cache and the serving provider
+  untouched -- selecting OpenAI with no key returns a clear error and Gemini
+  keeps working. The route is resolved **once per call**, so an admin change
+  cannot swap the provider out from under a request already in flight.
+- **The seeded per-feature routes are deactivated** by migration 019. Migrations
+  005/009 seeded five rows as *defaults*, and with the platform config beneath
+  them a global switch would have applied to **nothing**. Nothing is deleted and
+  the override capability remains -- it is now a deliberate act, labelled as
+  such in the UI. Consequence: `memory_extraction` and `title_generation` move
+  from `flash-lite` to the platform model unless re-enabled.
+- **Sessions are isolated by construction.** `runtime_config.py` imports nothing
+  from `app.auth` and touches no auth table; a test parses its import graph to
+  keep it that way, and behavioural tests sign a student in, switch Gemini →
+  OpenAI → Gemini, and assert the access token still authenticates, the refresh
+  token still rotates, and every `refresh_sessions`/`users` row is unchanged.
+- **Guardrails** (`app/ai/guardrails.py`), applied *before* a provider is chosen
+  so the fallback cannot be used to get around a ceiling the primary hit:
+  request timeout, output-token clamp, input-size limit, per-user/per-feature/
+  global rate ceilings, per-user concurrency, optional daily/monthly token
+  ceilings, and an in-process circuit breaker. **There was previously no timeout
+  at all** -- a hung provider hung the student's chat request with it,
+  indefinitely. Oversized input is **refused, not truncated**: silently dropping
+  part of a conversation could remove the message that indicates danger while
+  still returning a confident low-risk score. Token ceilings count only tokens a
+  provider actually reported; usage is never estimated.
+- **Safety is untouched and now structurally fenced off.** The pipeline is still
+  parse → validate → safety floor → derive level → crisis, and a fallback
+  response takes the identical path. `app/ai/router.py` imports nothing from
+  `app.intelligence` and nothing named "safety" -- asserted by a test, because a
+  router that could see risk scores could one refactor later choose a provider
+  based on them.
+- **Telemetry**: `ai_usage_logs` gains `failure_category`, `fallback_used` and
+  `request_id` (the same correlation id as the structured logs, the audit trail
+  and Sentry). `error_message` is now redacted on the way in -- an *unmapped*
+  exception stores only its type name, because its text is unreviewed and could
+  quote the request, and the request is the prompt. Admin health is derived from
+  this telemetry, never by polling a paid API to colour a badge.
+- **Audit**: `admin.ai_configuration_changed` records both successful and
+  **refused** changes, with provider/model identifiers only.
+- Docs: new `docs/ai-providers.md`; a section in `docs/production-configuration.md`;
+  `.env.example` and `.env.docker.example` rewritten with the full AI block.
+- Tests: 101 new across `test_ai_providers.py`, `test_ai_runtime_config.py` and
+  `test_ai_guardrails.py` (471 backend total). No test calls a real provider.
 
 ### September 16, 2026 — Audit trail: append-only, correlated, content-minimal
 - **The table was missing the four columns an incident actually needs.**
@@ -700,9 +774,12 @@ npm run build
   typecheck, frontend tests, docker build), Sentry + request ids
 - Audit trail: append-only (DB-enforced), request-correlated, content-minimal,
   platform-admin only, streamed CSV export — see `docs/audit-logging.md`
+- AI control layer: Gemini primary + OpenAI implemented-but-disabled, a
+  supported-model registry, runtime admin switching with no restart, bounded
+  retry/fallback, and cost guardrails — see `docs/ai-providers.md`
 
-**Numbers:** 29 frontend routes · 20 backend modules · 47 tables · 18 migrations ·
-370 backend tests · 42 frontend tests
+**Numbers:** 29 frontend routes · 20 backend modules · 48 tables · 19 migrations ·
+471 backend tests · 42 frontend tests
 
 **Known gaps** — see Next Steps below.
 
@@ -783,6 +860,13 @@ School Code: `RHS2026`
 - Active prompt loaded from `ai_prompt_versions` table (DB-first)
 - Fallback to `app/ai/prompts.py` if no DB prompt found
 - Prompt name: `comrade-system`, version: `v1`
+
+### Provider abstraction
+
+Gemini is primary (`gemini-2.5-flash`); OpenAI (`gpt-5-mini`) is implemented but
+disabled pending credentials. Which pairs are *supported* is decided by
+`app/ai/registry.py`; which is *active* by env plus an admin-settable
+`ai_runtime_config` row. Full reference: `docs/ai-providers.md`.
 
 ### AI Message Metadata (JSONB)
 ```json

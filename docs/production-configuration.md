@@ -167,3 +167,38 @@ points that matter for a deployment:
 > DPDP questions recorded in `app/consent/policy.py`.
 
 ---
+
+---
+
+## AI providers and runtime model switching
+
+Full reference: **[`docs/ai-providers.md`](ai-providers.md)**. Deployment-relevant
+points:
+
+- **Only `GEMINI_API_KEY` is required today.** Gemini (`gemini-2.5-flash`) is
+  primary; OpenAI (`gpt-5-mini`) is implemented but disabled. A missing
+  `OPENAI_API_KEY` does not affect startup or Gemini. In production a missing
+  credential for a provider that *is* in use refuses startup; outside
+  production it warns.
+- **API keys are environment-only.** Never in the database, the audit trail,
+  usage telemetry, logs, or any response to the frontend — the admin UI receives
+  only a boolean per provider.
+- **A platform admin can switch provider/model at `/admin/ai`** with no deploy
+  and no restart. Selections come from a backend allowlist; arbitrary strings
+  are rejected. An invalid configuration is refused before anything is written,
+  so the working provider keeps serving.
+- **Switching does not touch authentication.** No session, token, or user row is
+  read or written on that path; it is enforced structurally and tested.
+- **A request timeout now exists** (`AI_REQUEST_TIMEOUT_SECONDS`, 30s). There
+  was none before, so a hung provider hung a student's chat request with it.
+- **Guardrails are per-process**, like the existing HTTP rate limiter: with
+  `WEB_CONCURRENCY>1` each limit is effectively N times looser and each worker
+  caches the configuration separately. Token ceilings are global (counted in
+  SQL). See the multi-worker caveat in the reference doc.
+- **Migration 019 deactivates five seeded per-feature routes** so platform-level
+  switching actually applies. `memory_extraction` and `title_generation` move
+  from `gemini-2.5-flash-lite` to the platform model as a result.
+
+> ⚠️ **`DB_ECHO` cannot be enabled in production** — the app now refuses to
+> start. Unrelated to the AI layer; see
+> [SQL statement logging](#sql-statement-logging-db_echo) below.
