@@ -10,6 +10,19 @@
 #   2. Render dashboard → New → Blueprint → pick the repo.
 #   3. Fill in the values marked `sync: false` (they are secrets; Render
 #      prompts for each and never stores them in git).
+#   4. Create the first school and platform admin — a production database has
+#      neither, and `seed` is refused there. Once, from a shell on kio-api:
+#
+#        BOOTSTRAP_ADMIN_EMAIL=you@yourschool.example \
+#        BOOTSTRAP_ADMIN_PASSWORD='<a password you have never committed>' \
+#        BOOTSTRAP_SCHOOL_NAME='Pilot School' \
+#        BOOTSTRAP_SCHOOL_CODE=PILOT2026 \
+#        python -m database.bootstrap
+#
+#      It refuses once any admin exists. Do NOT add these as service env vars:
+#      they are needed for one command, not for every boot.
+#   5. Register counselors at /admin/counselors and assign each to their
+#      school(s) — an unassigned counselor receives no risk alerts.
 #
 # Two ordering facts that bite people, both handled below:
 #   * VITE_* are compiled into the frontend bundle, so the API URL must be
@@ -68,6 +81,20 @@ services:
       - key: FRONTEND_URL
         value: https://kio-web.onrender.com
 
+      # The API's own hostname(s). Required in production: without it the app
+      # refuses to start, because an unconstrained Host header can be reflected
+      # into any absolute URL the app builds. Change this with the service name
+      # or a custom domain.
+      - key: ALLOWED_HOSTS
+        value: '["kio-api.onrender.com"]'
+
+      # Off unless a DSN is supplied. Render prompts for it; leaving it blank
+      # disables reporting rather than failing.
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+
       # Single worker: the rate limiter and the crisis/intelligence background
       # pipeline are both per-process today. See backend/docker-entrypoint.sh.
       - key: WEB_CONCURRENCY
@@ -76,6 +103,9 @@ services:
       # --- Secrets: Render prompts for these on first deploy ---------
       - key: GEMINI_API_KEY
         sync: false
+      # Production refuses EMAIL_PROVIDER=noop and a blank RESEND_API_KEY:
+      # verification, password reset and crisis escalation all depend on mail,
+      # and the noop provider reports success while delivering nothing.
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
@@ -106,6 +136,13 @@ services:
         value: https://kio-api.onrender.com
       - key: VITE_GOOGLE_CLIENT_ID
         sync: false
+      # Also build-time: a bundle built without a DSN contains no reporting
+      # configuration at all. Session replay is off in code — it would record
+      # the chat screen.
+      - key: VITE_SENTRY_DSN
+        sync: false
+      - key: VITE_SENTRY_ENVIRONMENT
+        value: production
 
     # SPA fallback. /student, /verify-email and /reset-password have no file on
     # disk; without this every deep link — including emailed reset links — 404s.
