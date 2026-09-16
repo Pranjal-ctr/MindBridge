@@ -141,10 +141,65 @@ def mock_ai(monkeypatch):
 
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Provide a test database session with rollback."""
-    async with test_session_factory() as session:
-        yield session
-        await session.rollback()
+    """
+    A database session whose writes cannot outlive the test.
+
+    Previously this was a plain session with a rollback at teardown, which
+    isolated tests only while nothing committed. Several things legitimately
+    do:
+
+      * `login_account` in test_audit.py commits on purpose, because detached
+        audit writers open their own session and a second session cannot see
+        uncommitted rows;
+      * `test_ai_runtime_config.py` commits for the same reason;
+      * `GET /admin/audit-logs/export` commits the request's session in
+        production code, before it starts streaming.
+
+    A commit on the shared session writes *everything* pending on it, so one
+    export test permanently persisted its tenant, its admin and its student.
+    That is how a clean run ended with 20 users and 6 admins still in the
+    table, and why a test asserting "no platform admin exists yet" passed alone
+    and failed in the suite.
+
+    So the test owns the transaction instead of the session. Each test gets its
+    own connection with an outer transaction open, and every session on that
+    connection joins it through a SAVEPOINT: `commit()` releases a savepoint and
+    is immediately visible to other sessions on the same connection -- which is
+    exactly what the fixtures above need -- while the outer rollback at teardown
+    undoes all of it. Nothing reaches the database permanently, whoever commits.
+
+    The app's own session factory is redirected to the same connection for the
+    duration of the test, so code that deliberately opens its own session
+    (detached audit writes, safety logging, background hooks) still gets a
+    *separate session* -- the property those paths depend on -- while staying
+    inside the test's transaction rather than escaping it.
+    """
+    import database.session as db_session_module
+
+    async with test_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        # create_savepoint: a session bound to a connection that already has a
+        # transaction would otherwise participate in it directly, and its
+        # commit() would end the outer transaction for good.
+        bound_factory = async_sessionmaker(
+            bind=connection,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+
+        previous_factory = db_session_module.async_session_factory
+        db_session_module.async_session_factory = bound_factory
+
+        session = bound_factory()
+        try:
+            yield session
+        finally:
+            db_session_module.async_session_factory = previous_factory
+            await session.close()
+            # Undoes every savepoint released inside, including app commits.
+            await transaction.rollback()
 
 
 @pytest_asyncio.fixture
