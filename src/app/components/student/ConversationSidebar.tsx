@@ -46,12 +46,18 @@ export function ConversationSidebar({
           <Link to="/student" aria-label="Kio home">
             <KioLogo className="h-7 w-auto" />
           </Link>
+          {/* A real control, not a breadcrumb. Taking the student navigation
+              away for the chat makes this the only way back on desktop, and as
+              a line of small grey text it was easy to miss entirely. It is a
+              full-width row with a ~42px hit area and a surface of its own —
+              but a tinted one, so it stays a step below the filled New Chat
+              button rather than competing with it. */}
           <Link
             to="/student"
-            className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition hover:text-foreground"
+            className="mt-3 flex w-full items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-3 text-sm font-medium text-foreground transition hover:border-border hover:bg-muted"
           >
-            <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-            Back to Kio
+            <ArrowLeft className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+            Back to Home
           </Link>
         </div>
       )}
