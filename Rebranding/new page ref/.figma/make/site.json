@@ -1,0 +1,10 @@
+{
+  "description": "This journal writing web application allows users to document their thoughts and experiences, providing a structured space for reflection and personal growth.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
