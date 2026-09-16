@@ -17,16 +17,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import {
-  Loader2,
-  MessageSquare,
-  Plus,
-  Send,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Loader2, Send, X } from 'lucide-react';
 import { KioMascot } from './KioMascot';
 import { StudentLayout } from './student/StudentLayout';
+import { ConversationSidebar } from './student/ConversationSidebar';
 import { useConversations, useMessages } from '../../hooks/useConversations';
 import { useWellnessScore } from '../../hooks/useWellness';
 import { StudentOnboarding } from './StudentOnboarding';
@@ -182,72 +176,30 @@ export function StudentDashboard() {
     (c) => c.conversation_id === activeConversationId,
   );
 
-  const conversationList = (
-    <>
-      <button
-        type="button"
-        onClick={handleNewConversation}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
-      >
-        <Plus className="h-4 w-4" strokeWidth={2} />
-        New Chat
-      </button>
-
-      <div className="mt-3 min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-        {convsLoading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="h-5 w-5 motion-safe:animate-spin text-muted-foreground" />
-          </div>
-        ) : conversations.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-            No conversations yet.
-          </p>
-        ) : (
-          conversations.map((conv) => {
-            const active = conv.conversation_id === activeConversationId;
-            return (
-              <div
-                key={conv.conversation_id}
-                className={`group flex items-center rounded-xl transition ${
-                  active ? 'bg-secondary/10 text-secondary' : 'hover:bg-muted/60'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => selectConversation(conv.conversation_id)}
-                  aria-current={active ? 'true' : undefined}
-                  className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left"
-                >
-                  <MessageSquare className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                  <span className="truncate text-sm">
-                    {conv.title || 'New Conversation'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteConversation(conv.conversation_id)}
-                  aria-label={`Delete ${conv.title || 'conversation'}`}
-                  className="mr-1 rounded-lg p-1.5 text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                >
-                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                </button>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </>
+  const conversationList = (variant: 'rail' | 'panel') => (
+    <ConversationSidebar
+      variant={variant}
+      conversations={conversations}
+      activeConversationId={activeConversationId}
+      isLoading={convsLoading}
+      onSelect={selectConversation}
+      onNew={handleNewConversation}
+      onDelete={handleDeleteConversation}
+    />
   );
 
   return (
     <StudentLayout
       variant="full"
+      // Comrade's rail replaces the student navigation rather than sitting
+      // beside it; `Back to Kio` at its top is the way out.
+      sidebar={conversationList('rail')}
       headerRight={
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setChatListOpen(true)}
-            className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted/60 hover:text-foreground lg:hidden"
+            className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted/60 hover:text-foreground md:hidden"
           >
             Chats
           </button>
@@ -269,14 +221,11 @@ export function StudentDashboard() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {/* ── Conversation rail (desktop) ──────────────────────────── */}
-        <aside className="hidden w-60 shrink-0 flex-col border-r border-border/60 px-3 pb-4 lg:flex">
-          {conversationList}
-        </aside>
-
-        {/* ── Conversation panel (tablet / phone) ──────────────────── */}
+        {/* ── Conversation panel (phone) ───────────────────────────
+            The rail itself is the shell's sidebar at md and up; this is the
+            same list in a drawer for widths that have no room for one. */}
         {chatListOpen && (
-          <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="fixed inset-0 z-40 md:hidden">
             <div
               className="absolute inset-0 bg-black/40"
               onClick={() => setChatListOpen(false)}
@@ -294,7 +243,7 @@ export function StudentDashboard() {
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              {conversationList}
+              {conversationList('panel')}
             </div>
           </div>
         )}
