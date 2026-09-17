@@ -1,6 +1,13 @@
-import { Link } from 'react-router-dom';
-import { Brain, Shield, Users, TrendingUp, MessageSquare, Heart, Lock, BarChart3, Calendar, ChevronRight, Check, Menu, X } from 'lucide-react';
+import { Shield, Users, TrendingUp, Heart, Lock, BarChart3, Check, Menu, X } from 'lucide-react';
 import { KioLogo } from './KioLogo';
+import { KioMascot } from './KioMascot';
+import { Reveal } from './landing/Reveal';
+import { TheRealitySection } from './landing/TheRealitySection';
+import { TheShiftSection } from './landing/TheShiftSection';
+import { WhyKioSection } from './landing/WhyKioSection';
+import { ProductStorySection } from './landing/ProductStorySection';
+import { SectionLabel } from './landing/SectionLabel';
+import { AnchorLink, TransitionLink } from './landing/TransitionLink';
 import { useState } from 'react';
 
 export function LandingPage() {
@@ -16,14 +23,15 @@ export function LandingPage() {
               <KioLogo className="h-8 w-auto" />
             </div>
 
-            <nav className="hidden md:flex items-center gap-8">
-              <a href="#features" className="text-muted-foreground hover:text-foreground transition">Features</a>
-              <a href="#how-it-works" className="text-muted-foreground hover:text-foreground transition">How It Works</a>
-              <a href="#pricing" className="text-muted-foreground hover:text-foreground transition">Pricing</a>
-              <Link to="/login" className="text-muted-foreground hover:text-foreground transition">Sign In</Link>
-              <Link to="/login" className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition">
+            <nav className="hidden md:flex items-center gap-7">
+              <AnchorLink href="#why-kio" className="text-muted-foreground hover:text-foreground transition">Why Kio</AnchorLink>
+              <AnchorLink href="#how-it-works" className="text-muted-foreground hover:text-foreground transition">How It Works</AnchorLink>
+              <AnchorLink href="#features" className="text-muted-foreground hover:text-foreground transition">Features</AnchorLink>
+              <AnchorLink href="#pricing" className="text-muted-foreground hover:text-foreground transition">Pricing</AnchorLink>
+              <TransitionLink to="/login" className="text-muted-foreground hover:text-foreground transition">Sign In</TransitionLink>
+              <TransitionLink to="/login" className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition motion-safe:active:scale-[0.97]">
                 Start Free
-              </Link>
+              </TransitionLink>
             </nav>
 
             <button
@@ -39,121 +47,104 @@ export function LandingPage() {
         {mobileMenuOpen && (
           <div className="md:hidden border-t border-border bg-white">
             <nav className="flex flex-col px-4 py-4 gap-4">
-              <a href="#features" className="text-muted-foreground hover:text-foreground transition">Features</a>
-              <a href="#how-it-works" className="text-muted-foreground hover:text-foreground transition">How It Works</a>
-              <a href="#pricing" className="text-muted-foreground hover:text-foreground transition">Pricing</a>
-              <Link to="/login" className="text-muted-foreground hover:text-foreground transition">Sign In</Link>
-              <Link to="/login" className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-center">
+              <AnchorLink href="#why-kio" onClick={() => setMobileMenuOpen(false)} className="text-muted-foreground hover:text-foreground transition">Why Kio</AnchorLink>
+              <AnchorLink href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="text-muted-foreground hover:text-foreground transition">How It Works</AnchorLink>
+              <AnchorLink href="#features" onClick={() => setMobileMenuOpen(false)} className="text-muted-foreground hover:text-foreground transition">Features</AnchorLink>
+              <AnchorLink href="#pricing" onClick={() => setMobileMenuOpen(false)} className="text-muted-foreground hover:text-foreground transition">Pricing</AnchorLink>
+              <TransitionLink to="/login" className="text-muted-foreground hover:text-foreground transition">Sign In</TransitionLink>
+              <TransitionLink to="/login" className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-center transition motion-safe:active:scale-[0.97]">
                 Start Free
-              </Link>
+              </TransitionLink>
             </nav>
           </div>
         )}
       </header>
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-teal-50 py-20 md:py-32">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-2 gap-12 items-center">
-            <div>
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-6 leading-tight">
-                AI-Powered Support for Students and Parents
+      <section className="relative overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-teal-50 py-14 md:py-16 lg:py-20">
+        {/* Soft Kio atmosphere behind the hero. Decorative only. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-24 -top-16 h-80 w-80 rounded-full bg-violet-200/40 blur-3xl animate-kio-drift" />
+          <div className="absolute right-0 top-1/3 h-96 w-96 translate-x-1/3 rounded-full bg-teal-200/35 blur-3xl" />
+        </div>
+
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid md:grid-cols-2 gap-10 items-center lg:gap-12">
+            <Reveal from="left">
+              <SectionLabel align="left">For students, parents, counselors and schools</SectionLabel>
+              <h1 className="mt-6 mb-5 text-[2.75rem] font-bold leading-[1.1] text-foreground sm:text-5xl lg:text-[4rem]">
+                A space where every student{' '}
+                <span className="text-secondary">feels heard</span>.
               </h1>
-              <p className="text-xl text-muted-foreground mb-8 leading-relaxed">
-                Early support, healthier relationships, and better outcomes through AI guidance and human expertise.
+              <p className="mb-8 max-w-xl text-xl leading-relaxed text-muted-foreground md:text-[1.375rem]">
+                Kio is a private AI companion for students — and a gentle way for the people around
+                them to offer support earlier. Insights are shared. Conversations are not.
               </p>
               <div className="flex flex-col sm:flex-row gap-4">
-                <Link to="/login" className="px-8 py-4 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition shadow-lg text-center">
+                <TransitionLink to="/login" className="px-8 py-4 bg-primary text-primary-foreground rounded-xl text-[1.0625rem] font-medium hover:bg-primary/90 shadow-lg text-center transition motion-safe:active:scale-[0.97]">
                   Start Free
-                </Link>
-                <button className="px-8 py-4 bg-white text-primary border-2 border-primary rounded-xl font-medium hover:bg-blue-50 transition">
-                  Book Demo
-                </button>
+                </TransitionLink>
+                <AnchorLink href="#reality" className="px-8 py-4 bg-white text-primary border-2 border-primary rounded-xl text-[1.0625rem] font-medium hover:bg-blue-50 text-center transition motion-safe:active:scale-[0.97]">
+                  See why Kio exists
+                </AnchorLink>
               </div>
-            </div>
+            </Reveal>
 
-            <div className="relative">
-              <div className="bg-white rounded-2xl shadow-2xl p-8 border border-border">
+            <Reveal from="right" delay={120} className="relative">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -inset-4 rounded-[2.5rem] bg-gradient-to-br from-violet-200/50 to-teal-100/50 blur-2xl"
+              />
+              <div className="relative bg-white rounded-3xl shadow-[0_28px_70px_-28px_rgba(35,43,109,0.5)] p-6 sm:p-8 border border-white">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-12 h-12 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center">
-                    <Brain className="w-6 h-6 text-white" />
-                  </div>
+                  <KioMascot size={48} />
                   <div>
-                    <div className="font-medium">AI Wellness Companion</div>
-                    <div className="text-sm text-muted-foreground">Available 24/7</div>
+                    <div className="text-lg font-medium text-foreground">Comrade</div>
+                    <div className="text-sm text-muted-foreground">Your space, whenever you need it</div>
                   </div>
                 </div>
                 <div className="space-y-4">
-                  <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl p-4">
-                    <p className="text-sm text-foreground">How can I help with exam stress?</p>
+                  <div className="ml-auto max-w-[85%] rounded-[1.25rem_1.25rem_0.375rem_1.25rem] bg-gradient-to-br from-indigo-50 to-indigo-100 p-4">
+                    <p className="text-[0.9375rem] text-foreground">I have exams next week and I can&apos;t focus.</p>
                   </div>
-                  <div className="bg-gradient-to-r from-emerald-50 to-emerald-100 rounded-xl p-4">
-                    <p className="text-sm text-foreground">I'm here for you. Let's explore some techniques together...</p>
+                  <div className="max-w-[90%] rounded-[1.25rem_1.25rem_1.25rem_0.375rem] bg-gradient-to-br from-teal-50 to-emerald-50 p-4">
+                    <p className="text-[0.9375rem] text-foreground">
+                      That sounds exhausting. Let&apos;s start with just tonight — what&apos;s the one
+                      thing weighing on you most?
+                    </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <div className="px-4 py-2 bg-muted rounded-full text-sm">Study tips</div>
                     <div className="px-4 py-2 bg-muted rounded-full text-sm">Confidence</div>
+                    <div className="px-4 py-2 bg-muted rounded-full text-sm">Talk to someone</div>
                   </div>
                 </div>
               </div>
-            </div>
+            </Reveal>
           </div>
         </div>
       </section>
 
-      {/* How It Works */}
-      <section id="how-it-works" className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">How It Works</h2>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              A comprehensive support system connecting students, parents, and counselors
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                <MessageSquare className="w-8 h-8 text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-3">1. Students Chat with AI</h3>
-              <p className="text-muted-foreground">
-                Students share their concerns in a safe, private environment. AI provides immediate support and guidance.
-              </p>
-            </div>
-
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                <TrendingUp className="w-8 h-8 text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-3">2. Parents Get Insights</h3>
-              <p className="text-muted-foreground">
-                Parents receive actionable recommendations without seeing private conversations, respecting student privacy.
-              </p>
-            </div>
-
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                <Users className="w-8 h-8 text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-3">3. Counselors Intervene</h3>
-              <p className="text-muted-foreground">
-                When needed, professional counselors step in with AI-generated summaries for effective support.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
+      <TheRealitySection />
+      <TheShiftSection />
+      <WhyKioSection />
+      <ProductStorySection />
 
       {/* Features */}
-      <section id="features" className="py-20 bg-gradient-to-br from-gray-50 to-blue-50">
+      <section id="features" className="scroll-mt-20 py-16 md:py-20 bg-gradient-to-br from-[#F7F6FE] to-[#EEF3FE]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">Features</h2>
-            <p className="text-xl text-muted-foreground">Everything you need for student wellness</p>
-          </div>
+          <Reveal className="text-center mb-12">
+            <SectionLabel>What&apos;s inside</SectionLabel>
+            <h2 className="mt-5 mb-4 text-[2.25rem] font-bold leading-[1.15] text-foreground sm:text-4xl md:text-5xl">
+              Built around trust
+            </h2>
+            <p className="mx-auto max-w-2xl text-xl leading-relaxed text-muted-foreground">
+              Every part of Kio is designed so a student can be honest — and so the adults around
+              them can still help.
+            </p>
+          </Reveal>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
               {
                 icon: Shield,
@@ -192,30 +183,31 @@ export function LandingPage() {
                 color: "from-indigo-500 to-indigo-600"
               }
             ].map((feature, index) => (
-              <div key={index} className="bg-white rounded-2xl p-8 shadow-lg border border-border hover:shadow-xl transition">
+              <Reveal key={index} delay={(index % 3) * 80} className="bg-white rounded-2xl p-7 shadow-lg border border-border hover:shadow-xl hover:-translate-y-1 transition duration-300">
                 <div className={`w-12 h-12 bg-gradient-to-br ${feature.color} rounded-xl flex items-center justify-center mb-4`}>
                   <feature.icon className="w-6 h-6 text-white" />
                 </div>
-                <h3 className="text-xl font-semibold mb-3">{feature.title}</h3>
-                <p className="text-muted-foreground">{feature.description}</p>
-              </div>
+                <h3 className="mb-3 text-xl font-semibold text-foreground">{feature.title}</h3>
+                <p className="text-[1.0625rem] leading-relaxed text-muted-foreground">{feature.description}</p>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
       {/* Student Privacy Promise */}
-      <section className="py-20 bg-white">
+      <section className="py-14 md:py-16 bg-white">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-12 text-white">
-            <div className="flex items-center gap-3 mb-6">
-              <Lock className="w-10 h-10" />
-              <h2 className="text-3xl font-bold">Our Privacy Promise</h2>
+          <Reveal className="relative overflow-hidden bg-gradient-to-br from-[#232B6D] via-[#3A45A8] to-[#5A6BFF] rounded-3xl p-8 sm:p-10 text-white shadow-[0_28px_70px_-28px_rgba(35,43,109,0.65)]">
+            <div aria-hidden className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[#31D7C2]/25 blur-3xl" />
+            <div className="relative flex items-center gap-3 mb-6">
+              <Lock className="w-9 h-9 shrink-0" aria-hidden />
+              <h2 className="text-2xl font-bold sm:text-3xl">Our privacy promise</h2>
             </div>
-            <p className="text-xl mb-8 text-blue-100">
+            <p className="relative mb-7 text-xl leading-relaxed text-blue-100">
               We believe trust is the foundation of effective mental health support. That's why we built Kio with privacy at its core.
             </p>
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="relative grid md:grid-cols-2 gap-4 sm:gap-5">
               {[
                 "Parents never see raw student conversations",
                 "End-to-end encryption for all communications",
@@ -226,23 +218,26 @@ export function LandingPage() {
               ].map((promise, index) => (
                 <div key={index} className="flex items-start gap-3">
                   <Check className="w-6 h-6 flex-shrink-0 text-emerald-300" />
-                  <span className="text-blue-50">{promise}</span>
+                  <span className="text-[1.0625rem] text-blue-50">{promise}</span>
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </div>
       </section>
 
       {/* Pricing */}
-      <section id="pricing" className="py-20 bg-gradient-to-br from-gray-50 to-teal-50">
+      <section id="pricing" className="scroll-mt-20 py-16 md:py-20 bg-gradient-to-br from-[#F7F6FE] to-[#EAF9F7]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">Pricing</h2>
-            <p className="text-xl text-muted-foreground">Choose the right plan for your needs</p>
-          </div>
+          <Reveal className="text-center mb-12">
+            <SectionLabel>Pricing</SectionLabel>
+            <h2 className="mt-5 mb-4 text-[2.25rem] font-bold leading-[1.15] text-foreground sm:text-4xl md:text-5xl">
+              Start where you are
+            </h2>
+            <p className="mx-auto max-w-2xl text-xl leading-relaxed text-muted-foreground">Choose the plan that fits your family or your school.</p>
+          </Reveal>
 
-          <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
+          <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
             {[
               {
                 name: "Individual",
@@ -292,7 +287,7 @@ export function LandingPage() {
             ].map((plan, index) => (
               <div
                 key={index}
-                className={`bg-white rounded-2xl p-8 shadow-lg border-2 ${
+                className={`bg-white rounded-2xl p-7 shadow-lg border-2 ${
                   plan.featured ? 'border-primary scale-105' : 'border-border'
                 } hover:shadow-xl transition`}
               >
@@ -301,24 +296,24 @@ export function LandingPage() {
                     Most Popular
                   </div>
                 )}
-                <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
+                <h3 className="mb-2 text-2xl font-bold text-foreground">{plan.name}</h3>
                 <div className="mb-4">
                   <span className="text-4xl font-bold text-foreground">{plan.price}</span>
                   <span className="text-muted-foreground ml-2">{plan.period}</span>
                 </div>
-                <p className="text-muted-foreground mb-6">{plan.description}</p>
-                <button className={`w-full py-3 rounded-xl font-medium mb-8 transition ${
+                <p className="text-muted-foreground mb-5">{plan.description}</p>
+                <button className={`w-full py-3 rounded-xl font-medium mb-6 transition motion-safe:active:scale-[0.97] ${
                   plan.featured
                     ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                     : 'bg-muted text-foreground hover:bg-muted/80'
                 }`}>
                   {plan.cta}
                 </button>
-                <ul className="space-y-3">
+                <ul className="space-y-2.5">
                   {plan.features.map((feature, fIndex) => (
                     <li key={fIndex} className="flex items-start gap-3">
                       <Check className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
-                      <span className="text-sm text-muted-foreground">{feature}</span>
+                      <span className="text-[0.9375rem] text-muted-foreground">{feature}</span>
                     </li>
                   ))}
                 </ul>
@@ -328,30 +323,43 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-br from-primary to-secondary text-white">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold mb-6">
-            Ready to Support Your Students?
-          </h2>
-          <p className="text-xl text-blue-100 mb-8">
-            Join hundreds of schools and thousands of families using Kio for student wellness.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link to="/login" className="px-8 py-4 bg-white text-primary rounded-xl font-medium hover:bg-blue-50 transition shadow-lg">
-              Start Free Trial
-            </Link>
-            <button className="px-8 py-4 bg-transparent border-2 border-white text-white rounded-xl font-medium hover:bg-white/10 transition">
-              Schedule Demo
-            </button>
-          </div>
+      {/* Hope + CTA */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-primary to-secondary py-16 text-white md:py-20">
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-20 bottom-0 h-80 w-80 rounded-full bg-[#31D7C2]/20 blur-3xl animate-kio-drift" />
+          <div className="absolute -right-16 -top-16 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+        </div>
+
+        <div className="relative mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
+          <Reveal className="flex justify-center">
+            <KioMascot size={72} />
+          </Reveal>
+          <Reveal delay={90}>
+            <p className="mt-5 font-handwritten text-4xl text-[#9BF3E7] sm:text-5xl">
+              Every student deserves a space to be heard.
+            </p>
+            <h2 className="mt-5 text-[2.25rem] font-bold leading-tight sm:text-4xl md:text-5xl">
+              Ready to support your students?
+            </h2>
+            <p className="mx-auto mt-4 max-w-2xl text-xl leading-relaxed text-blue-100">
+              Start with one classroom, one family, one conversation. Kio grows with you.
+            </p>
+            <div className="mt-7 flex flex-col justify-center gap-4 sm:flex-row">
+              <TransitionLink to="/login" className="px-8 py-4 bg-white text-primary rounded-xl text-[1.0625rem] font-medium hover:bg-blue-50 shadow-lg transition motion-safe:active:scale-[0.97]">
+                Start Free
+              </TransitionLink>
+              <AnchorLink href="#pricing" className="px-8 py-4 bg-transparent border-2 border-white text-white rounded-xl text-[1.0625rem] font-medium hover:bg-white/10 transition motion-safe:active:scale-[0.97]">
+                See plans
+              </AnchorLink>
+            </div>
+          </Reveal>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-900 text-gray-300 py-12">
+      <footer className="bg-gray-900 text-gray-300 py-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
+          <div className="grid md:grid-cols-4 gap-8 mb-6">
             <div>
               <div className="flex items-center gap-2 mb-4">
                 <KioLogo className="h-7 w-auto" reverse />
@@ -363,10 +371,10 @@ export function LandingPage() {
             <div>
               <h4 className="font-semibold text-white mb-4">Product</h4>
               <ul className="space-y-2 text-sm">
-                <li><a href="#features" className="hover:text-white transition">Features</a></li>
-                <li><a href="#pricing" className="hover:text-white transition">Pricing</a></li>
-                <li><a href="#" className="hover:text-white transition">Security</a></li>
-                <li><a href="#" className="hover:text-white transition">Privacy</a></li>
+                <li><AnchorLink href="#features" className="hover:text-white transition">Features</AnchorLink></li>
+                <li><AnchorLink href="#pricing" className="hover:text-white transition">Pricing</AnchorLink></li>
+                <li><TransitionLink to="/privacy" className="hover:text-white transition">Privacy</TransitionLink></li>
+                <li><TransitionLink to="/terms" className="hover:text-white transition">Terms</TransitionLink></li>
               </ul>
             </div>
             <div>
