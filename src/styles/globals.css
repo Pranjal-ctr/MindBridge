@@ -113,3 +113,38 @@
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Route cross-fade.
+ *
+ * These pseudo-elements only exist while a view transition is running, and the
+ * only thing that starts one is the landing page's TransitionLink. No product
+ * surface is affected by this block: if nothing calls startViewTransition(),
+ * nothing here ever matches.
+ *
+ * Opacity only — no scale or slide. A route change that moves the page reads
+ * as a slideshow; a cross-fade just softens the cut. The outgoing side is
+ * quicker than the incoming one so the new page is what you are looking at
+ * while the two overlap.
+ * ------------------------------------------------------------------------- */
+@keyframes kio-route-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes kio-route-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: kio-route-out 180ms ease-out both;
+  }
+
+  ::view-transition-new(root) {
+    animation: kio-route-in 260ms ease-out both;
+  }
+}
