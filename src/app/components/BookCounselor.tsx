@@ -15,7 +15,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
-  ArrowLeft,
   Calendar,
   CalendarX,
   Check,
@@ -26,7 +25,8 @@ import {
   User,
   Users,
 } from 'lucide-react';
-import { KioLogo } from './KioLogo';
+import { ParentLayout } from './parent/ParentLayout';
+import { StudentLayout } from './student/StudentLayout';
 import api from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
 import { getDashboardRoute } from '../../lib/protected-route';
@@ -66,6 +66,29 @@ function quickDates(): { date: Date; label: string; sublabel: string }[] {
 export function BookCounselor() {
   const { user } = useAuth();
   const isParent = user?.role === 'parent';
+
+  /**
+   * The page keeps the navigation of whoever is signed in.
+   *
+   * It used to render its own bare header, so following "Book a Counselor"
+   * dropped a parent out of their dashboard entirely -- no children, no
+   * sections, and no way back but the browser's button. A student lost the
+   * whole student sidebar the same way.
+   *
+   * Both shells already exist and already know their own role's destinations,
+   * so this picks one rather than inventing a third navigation.
+   */
+  const Shell = useCallback(
+    ({ children }: { children: React.ReactNode }) =>
+      isParent ? (
+        <ParentLayout active="booking" title="Book a counseling session">
+          {children}
+        </ParentLayout>
+      ) : (
+        <StudentLayout variant="bare">{children}</StudentLayout>
+      ),
+    [isParent],
+  );
   const timezone = useMemo(() => viewerTimeZone(), []);
   const dates = useMemo(() => quickDates(), []);
 
@@ -178,8 +201,7 @@ export function BookCounselor() {
   if (confirmation) {
     const when = new Date(confirmation.scheduled_at);
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <Shell>
         <main className="max-w-2xl mx-auto px-4 py-16">
           <div className="bg-card border border-border rounded-xl p-8 text-center shadow-sm">
             <div className="w-14 h-14 rounded-full bg-accent/15 flex items-center justify-center mx-auto mb-4">
@@ -230,7 +252,7 @@ export function BookCounselor() {
             </div>
           </div>
         </main>
-      </div>
+      </Shell>
     );
   }
 
@@ -239,8 +261,7 @@ export function BookCounselor() {
     const start = new Date(selected.start);
     const end = new Date(selected.end);
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <Shell>
         <main className="max-w-2xl mx-auto px-4 py-10">
           <button
             type="button"
@@ -306,17 +327,22 @@ export function BookCounselor() {
             </button>
           </div>
         </main>
-      </div>
+      </Shell>
     );
   }
 
   // ── Search steps ───────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <Shell>
       <main className="max-w-3xl mx-auto px-4 py-10 space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold mb-1">Book a counseling session</h1>
+          {/* The parent shell puts the page name in its header bar; the student
+              shell is `bare` and has no bar, so the heading belongs here. One
+              of the two, never both -- rendering both showed the same sentence
+              twice, an inch apart. */}
+          {!isParent && (
+            <h1 className="text-2xl font-semibold mb-1">Book a counseling session</h1>
+          )}
           <p className="text-muted-foreground text-sm">
             Tell us when suits you and we&apos;ll show who&apos;s free. Times are in {timezone}.
           </p>
@@ -552,7 +578,7 @@ export function BookCounselor() {
           </Card>
         )}
       </main>
-    </div>
+    </Shell>
   );
 }
 
@@ -571,25 +597,6 @@ function childName(child?: LinkedChildResponse): string | undefined {
  */
 function homeRoute(role: string | undefined): string {
   return role ? getDashboardRoute(role) : '/';
-}
-
-function Header() {
-  const { user } = useAuth();
-
-  return (
-    <header className="border-b border-border bg-card">
-      <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
-        <KioLogo className="h-7" />
-        <Link
-          to={homeRoute(user?.role)}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to home
-        </Link>
-      </div>
-    </header>
-  );
 }
 
 function Card({ children }: { children: React.ReactNode }) {
