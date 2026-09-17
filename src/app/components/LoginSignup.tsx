@@ -84,6 +84,7 @@ export function LoginSignup() {
   const [googleRegToken, setGoogleRegToken] = useState<string | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const googleBtnRef = useRef<HTMLDivElement | null>(null);
+  const [googleBtnWidth, setGoogleBtnWidth] = useState(0);
 
   // Both self-signup roles (student, parent) belong to a school, so the code is
   // always required here. Counselors — the one role without it — are provisioned.
@@ -122,9 +123,31 @@ export function LoginSignup() {
     [loginWithGoogle, navigate, from]
   );
 
+  /**
+   * Width of the slot the Google button sits in.
+   *
+   * GIS takes a pixel width, not a CSS length, so the only way its button can
+   * line up with the email and password fields is to measure the container and
+   * hand Google the number. The previous hardcoded 320 was 64px narrower than
+   * those fields on desktop and wider than the card at 375px.
+   *
+   * Observed rather than measured once, so rotating a phone or opening
+   * dev-tools re-renders the button at the new width instead of leaving it
+   * stranded at the old one.
+   */
+  useEffect(() => {
+    const el = googleBtnRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setGoogleBtnWidth(Math.round(el.getBoundingClientRect().width));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [googleRegToken]);
+
   // Render the Google Identity Services button (only when configured + not mid-complete)
   useEffect(() => {
-    if (!googleEnabled() || googleRegToken) return;
+    if (!googleEnabled() || googleRegToken || !googleBtnWidth) return;
     let cancelled = false;
     loadGoogleScript()
       .then(() => {
@@ -138,15 +161,24 @@ export function LoginSignup() {
         });
         googleBtnRef.current.innerHTML = '';
         google.accounts.id.renderButton(googleBtnRef.current, {
+          // Google renders this inside its own iframe and its branding terms do
+          // not allow restyling it, so these five options are the whole surface
+          // we have. `outline` is the only theme that reads as one of our own
+          // secondary buttons on a white card; `rectangular` is the closest
+          // GIS gets to our rounded-xl; centring the logo matches the pair of
+          // social buttons this replaced.
           theme: 'outline',
           size: 'large',
-          width: 320,
+          shape: 'rectangular',
           text: 'continue_with',
+          logo_alignment: 'center',
+          // GIS clamps to 400 and refuses to go below 200.
+          width: Math.min(Math.max(googleBtnWidth, 200), 400),
         });
       })
       .catch(() => {/* script blocked/offline — button just won't appear */});
     return () => { cancelled = true; };
-  }, [handleGoogleCredential, googleRegToken, isSignup]);
+  }, [handleGoogleCredential, googleRegToken, isSignup, googleBtnWidth]);
 
   const handleCompleteGoogle = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -442,18 +474,6 @@ export function LoginSignup() {
               </div>
             )}
 
-            {/* Continue with Google (hidden when not configured) */}
-            {googleEnabled() && (
-              <div className="mb-6">
-                <div className="flex justify-center" ref={googleBtnRef} />
-                <div className="flex items-center gap-3 mt-6">
-                  <div className="flex-1 h-px bg-border" />
-                  <span className="text-xs text-muted-foreground">or use email</span>
-                  <div className="flex-1 h-px bg-border" />
-                </div>
-              </div>
-            )}
-
             {/* Role selection is a SIGNUP-only concern. On login the account's
                 role comes back from the server and drives the redirect, so asking
                 for it here would be decorative at best and misleading at worst
@@ -706,18 +726,34 @@ export function LoginSignup() {
               </button>
             </div>
 
-            {/* Divider */}
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-muted-foreground">Or continue with</span>
-              </div>
-            </div>
+            {/* Divider + Google.
+                Both are gated on googleEnabled() together: with no client id
+                configured the endpoint returns 503, and a live-looking button
+                over a divider that cannot work is worse than no button. */}
+            {googleEnabled() && (
+              <>
+                <div className="relative my-6">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-border"></div>
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-white text-muted-foreground">Or continue with</span>
+                  </div>
+                </div>
 
-            {/* Social Login */}
-            <div className="grid grid-cols-2 gap-3">
+                {/* GIS renders into this div. It is the measured element, so it
+                    must stay full-width and unpadded. */}
+                <div ref={googleBtnRef} className="flex w-full justify-center" />
+              </>
+            )}
+
+            {/* The original Google and Apple buttons. Commented out rather than
+                deleted: neither had a handler, so both were decorative, and the
+                Google one now duplicates the real GIS button above. Apple
+                sign-in has no backend at all -- there is no Apple provider in
+                app/auth, so restoring that button means building the flow
+                first, not just uncommenting markup. */}
+            {/* <div className="grid grid-cols-2 gap-3">
               <button className="px-4 py-3 border border-border rounded-xl hover:bg-muted transition flex items-center justify-center gap-2">
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -733,7 +769,7 @@ export function LoginSignup() {
                 </svg>
                 <span className="text-sm font-medium">Apple</span>
               </button>
-            </div>
+            </div> */}
           </div>
 
           {/* Privacy Notice */}
