@@ -36,6 +36,12 @@ databases:
     databaseName: mindbridge
     user: kio
     plan: basic-256mb        # smallest plan with automated daily backups
+    # Must match kio-api's region. Render's private network is per-region and
+    # the internal database hostname only resolves inside it, so a database
+    # left on the default region resolves nowhere from a Singapore service —
+    # which surfaces as `socket.gaierror: [Errno -2] Name or service not
+    # known` from alembic in preDeployCommand, naming neither the region nor
+    # the database.
     region: singapore
     postgresMajorVersion: "15"
     ipAllowList: []          # private network only; no public ingress
